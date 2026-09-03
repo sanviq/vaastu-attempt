@@ -1,0 +1,19 @@
+room_or_function,preferred_directions,acceptable_directions,avoid_directions,source_id,source_title
+Basement,"N, E, NE",,,S3,Vastu Shastra: A Traditional Indian Architectural Science
+Bathroom,E,NE only when planned outside the main building,,S1,Utility of the Ancient Indian Science of Vaastu in Modern Architecture
+Bathroom,E,,,S2,Vastu Shastra: An Established Science – VI: Vastu guidelines on bedrooms
+Bedroom,"S, W",,"N, NW (for sleeping orientation, this source's statement concerns sleeping/facing, not necessarily room location)",S1,Utility of the Ancient Indian Science of Vaastu in Modern Architecture
+Brahmasthan / central area,C,,,S5,Sense of direction in Vaastu Shastra
+Dining room,W,,,S2,Vastu Shastra: An Established Science – II: The importance of northeast angle in Vastu
+Dining room,W,,,S3,Vastu Shastra: A Traditional Indian Architectural Science
+Drawing / living room,"N, NW",,,S3,Vastu Shastra: A Traditional Indian Architectural Science
+Kitchen,SE,W (alternative),,S1,Utility of the Ancient Indian Science of Vaastu in Modern Architecture
+Kitchen,SE,,,S2,Vastu Shastra: An Established Science – VI: Vastu guidelines on bedrooms
+Main entrance,"E, N",,,S1,Utility of the Ancient Indian Science of Vaastu in Modern Architecture
+Main entrance,E,,,S5,Sense of direction in Vaastu Shastra
+Master bedroom / bedroom,"S, SW","W, NW for guests/children in specified cases","E, N, SE, NE (for general bedroom placement)",S2,Vastu Shastra: An Established Science – VI: Vastu guidelines on bedrooms
+Open space / setbacks,"N, E",,,S3,Vastu Shastra: A Traditional Indian Architectural Science
+Puja / meditation room,NE,,,S1,Utility of the Ancient Indian Science of Vaastu in Modern Architecture
+Puja / meditation room,NE,,,S3,Vastu Shastra: A Traditional Indian Architectural Science
+Study room,"NE, N, W",,"SW, NW",S4,Optimal floor plan for residential houses using Eastern concepts of Vaastu Shastra: an artificial intelligence approach
+WC / toilet,"N, NW",,,S3,Vastu Shastra: A Traditional Indian Architectural Science
