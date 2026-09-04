@@ -1,0 +1,14 @@
+# Core vision + UI
+opencv-python>=4.5.0
+pytesseract>=0.3.10
+streamlit>=1.32.0
+
+# Plotting (overlay uses OpenCV; Matplotlib/Plotly available for charts in app.py if needed)
+matplotlib>=3.7.0
+plotly>=5.18.0
+
+# PDF support (optional — only needed for PDF uploads)
+pdf2image>=1.16.0
+
+# Numerical
+numpy>=1.24.0

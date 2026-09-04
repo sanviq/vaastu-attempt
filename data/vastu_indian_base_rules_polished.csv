@@ -4,7 +4,7 @@ Bathroom,E,NE only when planned outside the main building,,S1,Utility of the Anc
 Bathroom,E,,,S2,Vastu Shastra: An Established Science – VI: Vastu guidelines on bedrooms
 Bedroom,"S, W",,"N, NW (for sleeping orientation, this source's statement concerns sleeping/facing, not necessarily room location)",S1,Utility of the Ancient Indian Science of Vaastu in Modern Architecture
 Brahmasthan / central area,C,,,S5,Sense of direction in Vaastu Shastra
-Dining room,W,,,S2,Vastu Shastra: An Established Science – II: The importance of northeast angle in Vastu
+Dining room,W,,,S2b,Vastu Shastra: An Established Science – II: The importance of northeast angle in Vastu
 Dining room,W,,,S3,Vastu Shastra: A Traditional Indian Architectural Science
 Drawing / living room,"N, NW",,,S3,Vastu Shastra: A Traditional Indian Architectural Science
 Kitchen,SE,W (alternative),,S1,Utility of the Ancient Indian Science of Vaastu in Modern Architecture
@@ -15,5 +15,5 @@ Master bedroom / bedroom,"S, SW","W, NW for guests/children in specified cases",
 Open space / setbacks,"N, E",,,S3,Vastu Shastra: A Traditional Indian Architectural Science
 Puja / meditation room,NE,,,S1,Utility of the Ancient Indian Science of Vaastu in Modern Architecture
 Puja / meditation room,NE,,,S3,Vastu Shastra: A Traditional Indian Architectural Science
-Study room,"NE, N, W",,"SW, NW",S4,Optimal floor plan for residential houses using Eastern concepts of Vaastu Shastra: an artificial intelligence approach
-WC / toilet,"N, NW",,,S3,Vastu Shastra: A Traditional Indian Architectural Science
+Study room,"NE, N, W",,SW,S4,Optimal floor plan for residential houses using Eastern concepts of Vaastu Shastra: an artificial intelligence approach
+WC / toilet,"N, NW",,"SW, NE",S3,Vastu Shastra: A Traditional Indian Architectural Science
