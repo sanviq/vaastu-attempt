@@ -82,6 +82,7 @@ def _best_direction(canonical_room):
 def _classify_room(room: dict) -> dict:
     room_label = room["room_label"]
     direction = room["direction"]
+    bbox = room.get("bbox")
     canonical = _canonical_room(room_label)
     rule = RULES.get(canonical) if canonical else None
 
@@ -89,6 +90,7 @@ def _classify_room(room: dict) -> dict:
         return {
             "room_label": room_label,
             "direction": direction,
+            "bbox": bbox,
             "canonical_room": canonical,
             "classification": "Moderate",
             "agreement_level": 0.0,
@@ -114,6 +116,7 @@ def _classify_room(room: dict) -> dict:
     return {
         "room_label": room_label,
         "direction": direction,
+        "bbox": bbox,
         "canonical_room": canonical,
         "classification": classification,
         "agreement_level": round(votes / total, 2) if total else 0.0,
@@ -146,6 +149,7 @@ def generate_remodel_tiers(room_results: list) -> dict:
             {
                 "room_label": v["room_label"],
                 "current_direction": v["direction"],
+                "bbox": v["bbox"],
                 "suggested_direction": _best_direction(v["canonical_room"]) if v["canonical_room"] else None,
                 "classification": v["classification"],
                 "agreement_level": v["agreement_level"],
