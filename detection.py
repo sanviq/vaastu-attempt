@@ -12,12 +12,19 @@ Contract (do not change shapes without messaging Sanvi immediately):
 
 Pipeline (each step guarded so a failure degrades gracefully):
     1. Load image (supports PNG/JPG; PDF -> first-page raster via pdf2image if present)
-    2. Pre-process: grayscale -> Gaussian blur -> adaptive threshold -> morphological close
-    3a. Contour detection (cv2.findContours) — external, area-filtered
-    3b. Hough Line Transform (cv2.HoughLinesP) — dominant wall lines -> room grid boxes
-        Both sources are merged; duplicates removed by IoU overlap check.
+    2. Build a wall mask (Otsu) and dilate it so hairline gaps in walls are sealed
+    3. Segment rooms as the enclosed floor regions *between* walls
+       (cv2.connectedComponentsWithStats on the inverted wall mask), filtered by
+       area and by whether the region touches the image edge (= outdoor space).
+       Fallback: if that yields almost nothing (open-plan drawings, broken walls)
+       drop back to the contour + Hough Line Transform grid below.
     4. OCR each room crop with Tesseract (falls back to room-number fallback if absent)
     5. Map each room centroid to a Vastu zone using the rotated Purusha Mandala grid
+
+Why segmentation, not a line grid, drives step 3: crossing every detected wall line
+produces boxes that span several rooms, so each OCR crop then contains text from
+several rooms at once and Tesseract returns unusable strings. Segmenting the floor
+regions gives one box per room, which fixes the labels as a side effect.
 
 Prototype constraints (match the brief):
     - Input is a clean, digitally-generated blueprint with consistent labels.
@@ -26,6 +33,7 @@ Prototype constraints (match the brief):
 
 from __future__ import annotations
 
+import difflib
 import math
 import re
 import warnings
@@ -161,6 +169,58 @@ def _preprocess(bgr: np.ndarray) -> np.ndarray:
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
     return closed
+
+
+# ---------------------------------------------------------------------------
+# Room segmentation — enclosed floor regions between walls (primary strategy)
+# ---------------------------------------------------------------------------
+
+def _wall_mask(bgr: np.ndarray) -> np.ndarray:
+    """
+    Return a mask where walls and printed text are white (255) and floor is black.
+
+    Otsu rather than adaptive threshold: blueprints are high-contrast line art, and
+    adaptive thresholding turns large blank floor areas into speckle, which then
+    fragments the floor regions we are about to segment.
+    """
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    _thresh, wall = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    # Seal hairline breaks so one room cannot leak into the next.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    return cv2.dilate(wall, kernel, iterations=1)
+
+
+def _segment_rooms(
+    bgr: np.ndarray,
+    min_area_fraction: float = 0.004,
+    max_area_fraction: float = 0.45,
+) -> list[tuple[int, int, int, int]]:
+    """
+    Return one (x, y, w, h) per enclosed floor region.
+
+    A room is a connected patch of floor fully enclosed by walls. Regions touching
+    the image border are the outdoor area around the building, not rooms, and
+    regions above max_area_fraction are usually the whole plan leaking through a
+    gap — both are dropped.
+    """
+    h, w = bgr.shape[:2]
+    total_area = h * w
+    interior = cv2.bitwise_not(_wall_mask(bgr))
+
+    count, _labels, stats, _cents = cv2.connectedComponentsWithStats(interior, connectivity=4)
+
+    boxes: list[tuple[int, int, int, int]] = []
+    for i in range(1, count):                      # 0 is the background label
+        x, y, bw, bh, area = (int(v) for v in stats[i])
+        fraction = area / total_area
+        if not (min_area_fraction <= fraction <= max_area_fraction):
+            continue
+        if x <= 1 or y <= 1 or x + bw >= w - 1 or y + bh >= h - 1:
+            continue                               # outdoor space
+        boxes.append((x, y, bw, bh))
+
+    boxes.sort(key=lambda b: (b[1], b[0]))
+    return boxes
 
 
 # ---------------------------------------------------------------------------
@@ -322,32 +382,73 @@ def _clean_ocr_text(raw: str) -> str:
     return cleaned
 
 
+# Words that plausibly appear in a room label. Anything Tesseract returns that
+# matches none of these is noise picked up off furniture or dimension lines, and a
+# clean "Room 4" is more useful downstream than a string like "rPyuVvA Rue".
+_ROOM_VOCAB = {
+    "kitchen", "bedroom", "master", "guest", "children", "toilet", "wc", "bath",
+    "bathroom", "washroom", "dining", "drawing", "living", "hall", "lounge",
+    "puja", "pooja", "prayer", "meditation", "study", "office", "library",
+    "basement", "entrance", "entry", "foyer", "lobby", "porch", "veranda",
+    "balcony", "terrace", "store", "storage", "utility", "laundry", "pantry",
+    "staircase", "stair", "stairs", "parking", "garage", "lawn", "garden",
+    "courtyard", "passage", "corridor", "room", "wash", "dress", "closet",
+}
+
+
+def _sanitise_label(text: str) -> Optional[str]:
+    """
+    Keep only the tokens that look like real room words; return None if none do.
+
+    Tolerates mild OCR corruption ("KTCHEN") via close matching, but rejects
+    strings with no recognisable room word at all.
+    """
+    tokens = [t for t in _clean_ocr_text(text).upper().split() if len(t) >= 2]
+    kept: list[str] = []
+    for token in tokens:
+        lowered = token.lower()
+        if lowered in _ROOM_VOCAB or difflib.get_close_matches(
+            lowered, _ROOM_VOCAB, n=1, cutoff=0.8
+        ):
+            kept.append(token)
+    if not kept:
+        return None
+    # "ROOM" alone carries no room type — not worth overriding the "Room N" fallback.
+    if all(t.lower() == "room" for t in kept):
+        return None
+    return " ".join(kept)
+
+
 def _ocr_crop(bgr: np.ndarray, x: int, y: int, w: int, h: int) -> Optional[str]:
     """
-    Run Tesseract on a padded crop of the image.
-    Returns cleaned text or None if OCR unavailable / empty result.
+    Run Tesseract on the interior of one room box.
+    Returns a sanitised label, or None if OCR is unavailable / found nothing usable.
     """
     if not _TESS_OK:
         return None
 
-    pad = 8
-    x0 = max(0, x - pad)
-    y0 = max(0, y - pad)
-    x1 = min(bgr.shape[1], x + w + pad)
-    y1 = min(bgr.shape[0], y + h + pad)
-    crop = bgr[y0:y1, x0:x1]
+    # Inset rather than pad: the surrounding walls and any label belonging to the
+    # neighbouring room are exactly what we do not want inside the crop.
+    inset = 4
+    x0, y0 = max(0, x + inset), max(0, y + inset)
+    x1, y1 = min(bgr.shape[1], x + w - inset), min(bgr.shape[0], y + h - inset)
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return None
 
-    # Upscale tiny crops to help Tesseract
-    if crop.shape[0] < 64 or crop.shape[1] < 64:
-        scale = max(64 / crop.shape[0], 64 / crop.shape[1])
+    crop = cv2.cvtColor(bgr[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+
+    # Tesseract is much steadier on ~200px-tall text regions than on raw crops.
+    scale = max(1.0, 200.0 / max(1, min(crop.shape[:2])))
+    if scale > 1.0:
         crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    _thresh, crop = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
     try:
-        text = pytesseract.image_to_string(crop, config="--psm 6 --oem 3")
-        cleaned = _clean_ocr_text(text)
-        return cleaned if cleaned else None
+        # psm 11 (sparse text) suits a label floating in a mostly empty room.
+        text = pytesseract.image_to_string(crop, config="--psm 11 --oem 3")
     except Exception:
         return None
+    return _sanitise_label(text)
 
 
 # ---------------------------------------------------------------------------
@@ -379,14 +480,16 @@ def detect_rooms(image_path: str, north_angle: float) -> list[dict]:
     bgr = _load_image(image_path)
     img_h, img_w = bgr.shape[:2]
 
-    binary = _preprocess(bgr)
+    # Step 3 — segment the enclosed floor regions; one box per room.
+    boxes = _segment_rooms(bgr)
 
-    # Step 3a — contour-based room detection
-    contour_boxes = _find_room_contours(binary)
-    # Step 3b — Hough Line Transform room grid detection
-    hough_boxes = _hough_room_boxes(binary)
-    # Merge both sources, removing near-duplicates
-    boxes = _merge_boxes(contour_boxes, hough_boxes)
+    if len(boxes) < 2:
+        # Open-plan drawing, or walls too broken to enclose anything: fall back to
+        # the contour + Hough line grid, which over-segments but still finds regions.
+        binary = _preprocess(bgr)
+        contour_boxes = _find_room_contours(binary)
+        hough_boxes = _hough_room_boxes(binary)
+        boxes = _merge_boxes(contour_boxes, hough_boxes)
 
     rooms: list[dict] = []
     for idx, (x, y, w, h) in enumerate(boxes, start=1):

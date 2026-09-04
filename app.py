@@ -46,15 +46,20 @@ st.markdown(
 )
 
 # Human-readable compass picker instead of a raw degree value.
+#
+# detect_rooms(north_angle=...) wants the image bearing of North, i.e. where North
+# sits once the plan is on screen. The question below asks the inverse (where the
+# top of the plan points), so the two are related by (360 - facing) % 360 —
+# keep these in step, they are easy to invert by accident.
 _FACING = {
     "North ↑ (top of plan faces North)": 0.0,
-    "North-East ↗": 45.0,
-    "East → (top of plan faces East)": 90.0,
-    "South-East ↘": 135.0,
+    "North-East ↗": 315.0,
+    "East → (top of plan faces East)": 270.0,
+    "South-East ↘": 225.0,
     "South ↓ (top of plan faces South)": 180.0,
-    "South-West ↙": 225.0,
-    "West ← (top of plan faces West)": 270.0,
-    "North-West ↖": 315.0,
+    "South-West ↙": 135.0,
+    "West ← (top of plan faces West)": 90.0,
+    "North-West ↖": 45.0,
 }
 
 _TIER_CAPTION = {
