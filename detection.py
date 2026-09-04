@@ -228,7 +228,8 @@ def _hough_room_boxes(
     v_positions: list[int] = []   # x-coords of vertical walls
 
     for line in lines:
-        x1, y1, x2, y2 = line[0]
+        # OpenCV <5 returns (N, 1, 4); OpenCV >=5 returns (N, 4) — flatten handles both.
+        x1, y1, x2, y2 = np.asarray(line).reshape(-1)
         dx, dy = abs(x2 - x1), abs(y2 - y1)
         if dx == 0 and dy == 0:
             continue
