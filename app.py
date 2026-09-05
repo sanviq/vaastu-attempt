@@ -9,7 +9,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from detection import detect_rooms
+from detection import detect_rooms, ocr_available
 from rules_engine import score_layout, generate_remodel_tiers
 from overlay import draw_overlay, draw_remodel_tier
 
@@ -70,14 +70,45 @@ _TIER_CAPTION = {
 }
 
 
+def _materialise(file_bytes: bytes, filename: str) -> str:
+    """
+    Write the upload to a temp file and return a path the vision code can read.
+
+    PDFs are rasterised here rather than downstream: detection.py can open a PDF
+    but overlay.py uses cv2.imread, which cannot, so a PDF upload used to crash
+    at the overlay step. Converting once up front keeps both on the same image.
+    """
+    suffix = Path(filename).suffix.lower() or ".png"
+    digest = hashlib.md5(file_bytes).hexdigest()[:12]
+    raw_path = Path(tempfile.gettempdir()) / f"vastu_{digest}{suffix}"
+    raw_path.write_bytes(file_bytes)
+
+    if suffix != ".pdf":
+        return str(raw_path)
+
+    png_path = raw_path.with_suffix(".png")
+    if not png_path.exists():
+        try:
+            from pdf2image import convert_from_path
+        except ImportError as exc:
+            raise RuntimeError(
+                "PDF support needs pdf2image — run `pip install pdf2image`, "
+                "or export your plan as PNG/JPG."
+            ) from exc
+        try:
+            pages = convert_from_path(str(raw_path), dpi=150, first_page=1, last_page=1)
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not read that PDF. pdf2image needs Poppler installed "
+                "(`brew install poppler`). Exporting the plan as PNG also works."
+            ) from exc
+        pages[0].save(png_path, "PNG")
+    return str(png_path)
+
+
 @st.cache_data(show_spinner=False)
 def _analyse(file_bytes: bytes, filename: str, north_angle: float):
-    suffix = Path(filename).suffix or ".png"
-    digest = hashlib.md5(file_bytes).hexdigest()[:12]
-    image_path = str(Path(tempfile.gettempdir()) / f"vastu_{digest}{suffix}")
-    with open(image_path, "wb") as f:
-        f.write(file_bytes)
-
+    image_path = _materialise(file_bytes, filename)
     rooms = detect_rooms(image_path, north_angle)
     result = score_layout(rooms)
     tiers = generate_remodel_tiers(result["room_results"])
@@ -97,14 +128,38 @@ with right:
     )
 north_angle = _FACING[facing]
 
+if not ocr_available():
+    st.warning(
+        "**Tesseract OCR is not installed**, so room names cannot be read off the plan. "
+        "Every room will show as “Room 1, Room 2…”, no Vastu rule can match it, and the "
+        "whole layout will score as *Moderate*. Install it with `brew install tesseract` "
+        "(macOS) or `sudo apt install tesseract-ocr` (Linux), then restart the app."
+    )
+
 if uploaded_file is None:
     st.info("Upload a floor plan (PNG, JPG or PDF) to run the compliance check.")
     st.stop()
 
-with st.spinner("Detecting rooms and checking Vastu compliance…"):
-    image_path, result, tiers = _analyse(uploaded_file.getvalue(), uploaded_file.name, north_angle)
+try:
+    with st.spinner("Detecting rooms and checking Vastu compliance…"):
+        image_path, result, tiers = _analyse(
+            uploaded_file.getvalue(), uploaded_file.name, north_angle
+        )
+except RuntimeError as exc:
+    st.error(str(exc))
+    st.stop()
 
 room_results = result["room_results"]
+
+if not room_results:
+    st.error(
+        "**No rooms could be detected in this plan.** The detector looks for floor "
+        "areas fully enclosed by walls, so this usually means the walls are drawn "
+        "too faintly, or the image is a photo rather than a clean blueprint. "
+        "Try a higher-resolution export with solid black wall lines."
+    )
+    st.stop()
+
 counts = {k: sum(1 for r in room_results if r["classification"] == k)
           for k in ("Compliant", "Moderate", "Non-Compliant")}
 
@@ -120,12 +175,20 @@ m3.metric("Moderate", counts["Moderate"])
 m4.metric("Non-compliant", counts["Non-Compliant"])
 st.caption(verdict)
 
+unmatched = sum(1 for r in room_results if not r["canonical_room"])
+if unmatched:
+    st.info(
+        f"{unmatched} of {len(room_results)} rooms could not be matched to a Vastu rule "
+        "(the label was unreadable or is not a room type in the dataset). "
+        "Those are counted as *Moderate* rather than judged."
+    )
+
 tab_overview, tab_rooms, tab_remodel = st.tabs(
     ["Compliance overlay", "Room-by-room", "Remodelling options"]
 )
 
 with tab_overview:
-    st.image(draw_overlay(image_path, room_results), use_container_width=True)
+    st.image(draw_overlay(image_path, room_results, north_angle), use_container_width=True)
 
 with tab_rooms:
     st.dataframe(
@@ -154,14 +217,20 @@ with tab_remodel:
         "Each option below is cumulative — 25% fixes only the worst violation, "
         "100% addresses every one."
     )
-    row1 = st.columns(2)
-    row2 = st.columns(2)
-    for col, pct in zip(row1 + row2, ("25", "50", "75", "100")):
-        with col:
-            st.markdown(f'<div class="tier-head">{pct}% remodel</div>', unsafe_allow_html=True)
-            st.markdown(
-                f'<div class="tier-sub">{_TIER_CAPTION[pct]} · '
-                f'{len(tiers[pct])} room(s)</div>',
-                unsafe_allow_html=True,
-            )
-            st.image(draw_remodel_tier(image_path, tiers[pct]), use_container_width=True)
+    if not tiers["100"]:
+        st.success("Every room already sits in a compliant direction — nothing to remodel.")
+    else:
+        row1 = st.columns(2)
+        row2 = st.columns(2)
+        for col, pct in zip(row1 + row2, ("25", "50", "75", "100")):
+            with col:
+                st.markdown(f'<div class="tier-head">{pct}% remodel</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="tier-sub">{_TIER_CAPTION[pct]} · '
+                    f'{len(tiers[pct])} room(s)</div>',
+                    unsafe_allow_html=True,
+                )
+                st.image(
+                    draw_remodel_tier(image_path, tiers[pct], north_angle),
+                    use_container_width=True,
+                )

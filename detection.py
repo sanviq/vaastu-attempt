@@ -58,6 +58,24 @@ except ImportError:
         stacklevel=1,
     )
 
+
+def ocr_available() -> bool:
+    """
+    True only if the Tesseract *binary* can actually be run.
+
+    The pip package importing is not enough — without the system binary every
+    room silently falls back to "Room N", no rule matches, and the whole plan
+    scores as Moderate. The UI needs to be able to say so out loud rather than
+    show a plausible-looking but meaningless result.
+    """
+    if not _TESS_OK:
+        return False
+    try:
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
+
 # ---------------------------------------------------------------------------
 # Optional PDF rasteriser
 # ---------------------------------------------------------------------------

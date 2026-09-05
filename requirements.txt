@@ -1,9 +1,13 @@
 # Core vision + UI
-opencv-python>=4.5.0
+#
+# opencv is capped below 5.0: OpenCV 5 changed HoughLinesP's return shape from
+# (N, 1, 4) to (N, 4), which crashed detection.py on a fresh install. The code
+# now handles both, but the cap keeps other v5 API changes out of a demo build.
+opencv-python>=4.5.0,<5.0.0
 pytesseract>=0.3.10
 streamlit>=1.32.0
 
-# Plotting (overlay uses OpenCV; Matplotlib/Plotly available for charts in app.py if needed)
+# Plotting (overlay.py renders with Matplotlib; Plotly is available for charts)
 matplotlib>=3.7.0
 plotly>=5.18.0
 
@@ -12,3 +16,12 @@ pdf2image>=1.16.0
 
 # Numerical
 numpy>=1.24.0
+
+# ---------------------------------------------------------------------------
+# System dependencies (NOT installable via pip — install these separately)
+#   Tesseract OCR   macOS: brew install tesseract   Ubuntu: apt install tesseract-ocr
+#       Without it every room is labelled "Room N", no Vastu rule matches, and
+#       the whole plan scores as Moderate.
+#   Poppler         macOS: brew install poppler     Ubuntu: apt install poppler-utils
+#       Only needed if you upload PDFs (pdf2image shells out to it).
+# ---------------------------------------------------------------------------
