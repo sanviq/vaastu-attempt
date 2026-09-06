@@ -86,12 +86,21 @@ Rewritten visually. No behavioural contract broken — both functions still take
 | 5.1 | `bbox` is now passed through `_classify_room` (both return paths) and `generate_remodel_tiers`. | **Contract gap.** `overlay.py` reads `bbox` off these dicts; without it `draw_overlay` skipped every room and `draw_remodel_tier` fell back to a generic banner. Nothing rendered. |
 | 5.2 | Added `hall` and `lounge` to the `Drawing / living room` keywords. | Indian plans almost always print the main living room as "HALL", so the largest room in the house matched no rule at all. |
 | 5.3 | `generate_remodel_tiers` now **excludes rooms with no matching rule** from the violation list. | PARKING has no rule in the dataset, so it was listed as a remodel step with a blank target direction — a row telling the user to move a room somewhere unspecified. |
+| 5.4 | **A direction outside every stated list is now judged by distance from the nearest preferred zone** — ≤90° Moderate, >90° Non-Compliant — instead of falling through to "Moderate, 0 sources, direction not addressed". | **The real bug behind the all-Moderate wash.** This dataset is almost entirely *preferred-only*; `avoid` is blank on 14 of 18 rows. So a kitchen in NW, which no row mentions, was reported as "not addressed" rather than as 180° from the SE the sources actually ask for. On the real plan 7 of 8 rooms landed there — nothing was ever non-compliant, so remodelling had nothing to rank. |
+| 5.5 | **`Bedroom` and `Master bedroom / bedroom` merged into one rule family** (`_RULE_FAMILIES`). | The dataset splits bedrooms across two rows and only the second carries an avoid list. A plain "BEDROOM" label matched the first alone — 1 source out of 2, and it threw away the only row that could ever mark a bedroom non-compliant. The NE bedroom is now correctly flagged. |
+| 5.6 | Unmatched room types return **`classification: "Unknown"`** instead of `"Moderate"`, and `score_layout` **excludes them from the score** (also returns `n_judged` / `n_rooms`). | Scoring a car park against rules that never mention car parks moved the number without meaning anything. |
+| 5.7 | **Every verdict now carries a written reason** and the rule's source titles, replacing `notes: None` and the bare "direction not addressed" string. | This was the actual complaint: the table said nothing about why a room passed or failed. |
+| 5.8 | Centre (`C`) handled explicitly rather than by angle. | The Brahmasthan is not on the compass, so "60° from SE" is meaningless for it. It now cites the dataset's own Brahmasthan row about keeping the centre open. |
 
-### `app.py` — display sizing
+### `app.py` — presentation
 
 | # | Change | Why |
 |---|---|---|
-| 6.1 | Overlay is shown at its natural width in a centred column (capped 920px) rather than `use_container_width=True`; page max-width 1400→1180px; hero and tier captions scaled down. | Streamlit was stretching the rendered overlay across the full container, undoing the fixed render width in 2.9. |
+| 6.1 | Overlay is shown at its natural width in a centred column (capped 920px) rather than `use_container_width=True`; page max-width 1400→1180px. | Streamlit was stretching the rendered overlay across the full container, undoing the fixed render width in 2.9. |
+| 6.2 | **Dashboard restyled after the SPENDLY dashboard**: dark radial ground, translucent cards with hairline borders, uppercase tracked stat labels, large colour-coded figures, verdict pills. | Requested. The page was four bare `st.metric` calls and a default dataframe. |
+| 6.3 | `st.metric` row replaced with custom stat cards + a **proportional compliance bar**. | Reads the split at a glance instead of four unrelated numbers. |
+| 6.4 | `st.dataframe` replaced with **room cards** carrying a verdict-coloured left edge, the matched rule, source agreement, and the full reason. The verdict hues match the boxes overlay.py paints on the plan. | The reason text is the point of the table and a dataframe cell truncated it. |
+| 6.5 | Added a **"Sources cited" expander** listing the classical texts behind the verdicts. | The app leans on 18 rows from 5 papers; naming them is the honest thing to do. |
 
 ---
 
@@ -105,8 +114,10 @@ Run against `30X40 NORTH FACING HOUSE PLANS`, the first genuine blueprint tested
 | Labels read | 1 usable (`TOILET`); rest `Room N`, plus `BEDRODM PARKIN` and `TOWLET` | **8/8 correct** |
 | Matched to a Vastu rule | 1/15 | **7/8** (only PARKING unmatched — correctly, the dataset has no parking rule) |
 | Directions | meaningless (boxes were furniture) | KITCHEN NW · BEDROOM NE · TOILET N · TOILET E · HALL C · PARKING SE · BEDROOM SW · PUJA S — all correct |
-| Remodel tiers | 4 identical screens | 2 / 3 / 5 / 6 rooms — genuinely different |
-| Overall score | 53.3% (meaningless) | 56.2% |
+| Verdicts | 1 Compliant, 14 Moderate, 0 Non-Compliant | **2 Compliant · 2 Moderate · 3 Non-Compliant · 1 Unknown** |
+| Explained verdicts | 1 of 15 | **8 of 8** |
+| Remodel tiers | 4 identical screens | 2 / 3 / 4 / 5 rooms — genuinely different |
+| Overall score | 53.3% (meaningless) | 42.9%, scored on the 7 rooms the dataset covers |
 
 Also verified: rotating `north_angle` to 90° shifts all 8 directions consistently; a blank
 image yields 0 rooms without crashing; the synthetic plan still reads 8/8 including the

@@ -54,8 +54,12 @@ _COLOURS = {
     "Compliant":     "#1f9d55",
     "Moderate":      "#d97706",
     "Non-Compliant": "#dc2626",
+    # A room type the dataset has no rule for. Grey, not amber: it was never
+    # judged, and colouring it like a partial pass overstates what is known.
+    "Unknown":       "#64748b",
 }
 _DEFAULT_COLOUR = "#64748b"
+_LEGEND_LABELS = {"Unknown": "Not in dataset"}
 
 _INK = "#0f172a"          # near-black for body text
 _MUTED = "#64748b"        # secondary text
@@ -226,7 +230,8 @@ def _draw_legend(ax: plt.Axes, w: float, y0: float, note: str) -> None:
     char_w = _LEGEND_FS * 0.83   # ~0.6 em wide at dpi 100, see _fit_fontsize
     mid = y0 + _FOOTER_H * 0.5
     x = 16.0
-    for label, colour in _COLOURS.items():
+    for key, colour in _COLOURS.items():
+        label = _LEGEND_LABELS.get(key, key)
         ax.add_patch(mpatches.Rectangle((x, mid - swatch / 2), swatch, swatch,
                                         facecolor=colour, edgecolor="none", zorder=3))
         ax.text(x + swatch * 1.7, mid, label, fontsize=_LEGEND_FS, color=_INK,
@@ -351,7 +356,8 @@ def draw_overlay(
         ax, plan_w,
         "Vastu compliance overlay",
         f"{n} room(s) analysed · {counts['Compliant']} compliant · "
-        f"{counts['Moderate']} moderate · {counts['Non-Compliant']} non-compliant",
+        f"{counts['Moderate']} moderate · {counts['Non-Compliant']} non-compliant"
+        + (f" · {counts['Unknown']} not in dataset" if counts["Unknown"] else ""),
         north_angle,
     )
     _draw_legend(

@@ -4,6 +4,7 @@ Thin glue only — wires detection -> rules_engine -> overlay in order. No logic
 """
 
 import hashlib
+import html
 import tempfile
 from pathlib import Path
 
@@ -19,16 +20,71 @@ st.set_page_config(
     layout="wide",
 )
 
+# ---------------------------------------------------------------------------
+# Theme
+# ---------------------------------------------------------------------------
+# Dark translucent cards, uppercase tracked labels, big colour-coded figures.
+# The three verdict hues are the same ones overlay.py paints on the plan, lifted
+# for legibility on a dark ground — the pill next to a room must read as the same
+# colour as the box drawn around it.
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 2rem; max-width: 1180px; }
-      .hero { border-radius: 12px; padding: 1.1rem 1.4rem; margin-bottom: 1.1rem;
-              background: linear-gradient(135deg, #1e3a5f 0%, #2d5a8c 100%); }
-      .hero h1 { color: #fff; margin: 0 0 .25rem 0; font-size: 1.45rem; }
-      .hero p  { color: #cfe0f5; margin: 0; font-size: .88rem; }
-      .tier-head { font-weight: 700; font-size: .95rem; margin: .2rem 0 .1rem 0; }
-      .tier-sub  { color: #8b98a8; font-size: .78rem; margin-bottom: .5rem; }
+      :root {
+        --bg:#07070F; --bg2:#0E0E1B; --card:rgba(255,255,255,.035);
+        --card-hi:rgba(255,255,255,.06); --border:rgba(255,255,255,.08);
+        --text:#E8E8F4; --muted:#6E6E9A;
+        --good:#35C77E; --warn:#E8A33D; --bad:#F0556B; --none:#6E6E9A;
+        --accent:#00E5FF;
+      }
+      .stApp { background: radial-gradient(1200px 600px at 15% -10%, #14142B 0%, var(--bg) 55%); }
+      .block-container { padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1180px; }
+
+      .hero { position:relative; border:1px solid var(--border); border-radius:16px;
+              padding:1.5rem 1.7rem; margin-bottom:1.3rem; overflow:hidden;
+              background: linear-gradient(135deg, rgba(0,229,255,.10) 0%, rgba(157,78,221,.10) 100%), var(--bg2); }
+      .hero h1 { color:#fff; margin:0 0 .3rem 0; font-size:1.5rem; letter-spacing:-.5px; font-weight:700; }
+      .hero p  { color:#A9A9C8; margin:0; font-size:.88rem; max-width:64ch; }
+
+      .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:.8rem; margin:.2rem 0 1rem 0; }
+      .stat { background:var(--card); border:1px solid var(--border); border-radius:14px;
+              padding:.95rem 1.1rem; transition:background .15s ease; }
+      .stat:hover { background:var(--card-hi); }
+      .stat .k { font-size:.66rem; text-transform:uppercase; letter-spacing:1px;
+                 color:var(--muted); font-weight:600; margin-bottom:.35rem; }
+      .stat .v { font-size:1.95rem; font-weight:700; letter-spacing:-1px; line-height:1.05; }
+      .stat .s { font-size:.72rem; color:var(--muted); margin-top:.2rem; }
+      .v.good{color:var(--good)} .v.warn{color:var(--warn)} .v.bad{color:var(--bad)}
+      .v.accent{color:var(--accent)} .v.none{color:var(--none)}
+
+      .bar { display:flex; height:8px; border-radius:99px; overflow:hidden;
+             border:1px solid var(--border); margin:.1rem 0 .35rem 0; }
+      .bar i { display:block; height:100%; }
+
+      .room { display:grid; grid-template-columns:1.4fr .5fr .9fr 2.4fr; gap:.9rem;
+              align-items:center; padding:.72rem .95rem; border:1px solid var(--border);
+              border-left:3px solid var(--edge); border-radius:11px;
+              background:var(--card); margin-bottom:.45rem; }
+      .room:hover { background:var(--card-hi); }
+      .room .nm { font-weight:650; color:var(--text); font-size:.92rem; letter-spacing:.2px; }
+      .room .rule { font-size:.72rem; color:var(--muted); margin-top:.12rem; }
+      .room .note { font-size:.78rem; color:#9C9CBE; line-height:1.35; }
+      .dir { font-size:.9rem; font-weight:700; color:var(--text); letter-spacing:.5px; }
+      .pill { display:inline-block; padding:.2rem .6rem; border-radius:99px;
+              font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.6px; }
+      .agree { font-size:.68rem; color:var(--muted); margin-top:.28rem; }
+
+      .thead { display:grid; grid-template-columns:1.4fr .5fr .9fr 2.4fr; gap:.9rem;
+               padding:0 .95rem .4rem .95rem; font-size:.66rem; text-transform:uppercase;
+               letter-spacing:1px; color:var(--muted); font-weight:600; }
+
+      .tier { border:1px solid var(--border); background:var(--card);
+              border-radius:12px; padding:.6rem .85rem; margin-bottom:.5rem; }
+      .tier .t { font-weight:700; font-size:.95rem; color:var(--text); }
+      .tier .c { color:var(--muted); font-size:.76rem; margin-top:.1rem; }
+
+      .stTabs [data-baseweb="tab-list"] { gap:.3rem; border-bottom:1px solid var(--border); }
+      .stTabs [data-baseweb="tab"] { font-size:.85rem; font-weight:600; letter-spacing:.2px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -38,8 +94,9 @@ st.markdown(
     """
     <div class="hero">
       <h1>🧭 Vastu Blueprint Compliance Checker</h1>
-      <p>Upload a floor plan to check each room against classical Vastu Shastra
-         direction rules — and see what to change, ranked by how much you want to remodel.</p>
+      <p>Upload a floor plan. Each room is read off the drawing, placed on the Vastu Purusha
+         Mandala, and checked against classical sources — with what to change, ranked by how
+         much you are willing to remodel.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -67,6 +124,13 @@ _TIER_CAPTION = {
     "50": "Balanced — address the most serious half.",
     "75": "Major remodel — most issues resolved.",
     "100": "Full alignment — every violation addressed.",
+}
+
+_VERDICT_VAR = {
+    "Compliant": "--good",
+    "Moderate": "--warn",
+    "Non-Compliant": "--bad",
+    "Unknown": "--none",
 }
 
 
@@ -115,6 +179,11 @@ def _analyse(file_bytes: bytes, filename: str, north_angle: float):
     return image_path, result, tiers
 
 
+def _stat(label: str, value: str, sub: str, tone: str) -> str:
+    return (f'<div class="stat"><div class="k">{label}</div>'
+            f'<div class="v {tone}">{value}</div><div class="s">{sub}</div></div>')
+
+
 left, right = st.columns([2, 1])
 with left:
     uploaded_file = st.file_uploader(
@@ -130,10 +199,10 @@ north_angle = _FACING[facing]
 
 if not ocr_available():
     st.warning(
-        "**Tesseract OCR is not installed**, so room names cannot be read off the plan. "
-        "Every room will show as “Room 1, Room 2…”, no Vastu rule can match it, and the "
-        "whole layout will score as *Moderate*. Install it with `brew install tesseract` "
-        "(macOS) or `sudo apt install tesseract-ocr` (Linux), then restart the app."
+        "**Tesseract OCR is not installed**, so the room names printed on the plan cannot "
+        "be read — and room names are how rooms are found. Install it with "
+        "`brew install tesseract` (macOS) or `sudo apt install tesseract-ocr` (Linux), "
+        "then restart the app."
     )
 
 if uploaded_file is None:
@@ -141,7 +210,7 @@ if uploaded_file is None:
     st.stop()
 
 try:
-    with st.spinner("Detecting rooms and checking Vastu compliance…"):
+    with st.spinner("Reading room labels and checking Vastu compliance…"):
         image_path, result, tiers = _analyse(
             uploaded_file.getvalue(), uploaded_file.name, north_angle
         )
@@ -161,27 +230,43 @@ if not room_results:
     st.stop()
 
 counts = {k: sum(1 for r in room_results if r["classification"] == k)
-          for k in ("Compliant", "Moderate", "Non-Compliant")}
+          for k in ("Compliant", "Moderate", "Non-Compliant", "Unknown")}
 
 score = result["overall_score"]
+judged = result["n_judged"]
 verdict = "Strong Vastu alignment" if score >= 75 else (
     "Partial alignment — worth remodelling" if score >= 45 else "Weak alignment — major changes advised"
 )
+tone = "good" if score >= 75 else ("warn" if score >= 45 else "bad")
 
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Overall compliance", f"{score}%", help=verdict)
-m2.metric("Compliant rooms", counts["Compliant"])
-m3.metric("Moderate", counts["Moderate"])
-m4.metric("Non-compliant", counts["Non-Compliant"])
-st.caption(verdict)
+st.markdown(
+    '<div class="stats">'
+    + _stat("Overall compliance", f"{score}%", verdict, tone)
+    + _stat("Compliant", str(counts["Compliant"]), "in a preferred zone", "good")
+    + _stat("Moderate", str(counts["Moderate"]), "partly aligned", "warn")
+    + _stat("Non-compliant", str(counts["Non-Compliant"]), "against the sources", "bad")
+    + "</div>",
+    unsafe_allow_html=True,
+)
 
-unmatched = sum(1 for r in room_results if not r["canonical_room"])
-if unmatched:
-    st.info(
-        f"{unmatched} of {len(room_results)} rooms could not be matched to a Vastu rule "
-        "(the label was unreadable or is not a room type in the dataset). "
-        "Those are counted as *Moderate* rather than judged."
+# Proportional bar — the same split as the numbers above, read at a glance.
+segments = [("Compliant", "--good"), ("Moderate", "--warn"),
+            ("Non-Compliant", "--bad"), ("Unknown", "--none")]
+total = len(room_results)
+st.markdown(
+    '<div class="bar">'
+    + "".join(
+        f'<i style="width:{counts[name] / total * 100:.2f}%;background:var({var})"></i>'
+        for name, var in segments if counts[name]
     )
+    + "</div>",
+    unsafe_allow_html=True,
+)
+
+scored_note = f"Scored on {judged} of {total} rooms"
+if counts["Unknown"]:
+    scored_note += f" · {counts['Unknown']} room type not covered by the dataset"
+st.caption(scored_note)
 
 tab_overview, tab_rooms, tab_remodel = st.tabs(
     ["Compliance overlay", "Room-by-room", "Remodelling options"]
@@ -197,30 +282,45 @@ with tab_overview:
         st.image(overlay_img, width=min(920, overlay_img.shape[1]))
 
 with tab_rooms:
-    st.dataframe(
-        [
-            {
-                "Room": r["room_label"],
-                "Direction": r["direction"],
-                "Matched rule": r["canonical_room"] or "—",
-                "Verdict": r["classification"],
-                "Source agreement": f"{int(r['agreement_level'] * 100)}%"
-                                    f" ({r['n_sources_confirming']}/{r['n_sources_total']})",
-                "Notes": r["notes"] or "",
-            }
-            for r in room_results
-        ],
-        use_container_width=True,
-        hide_index=True,
+    st.markdown(
+        '<div class="thead"><div>Room</div><div>Zone</div>'
+        '<div>Verdict</div><div>Why</div></div>',
+        unsafe_allow_html=True,
     )
+    rows = []
+    for r in room_results:
+        var = _VERDICT_VAR.get(r["classification"], "--none")
+        agreement = (
+            f'{r["n_sources_confirming"]}/{r["n_sources_total"]} sources'
+            if r["n_sources_total"] else "not in dataset"
+        )
+        rows.append(
+            f'<div class="room" style="--edge:var({var})">'
+            f'<div><div class="nm">{html.escape(r["room_label"])}</div>'
+            f'<div class="rule">{html.escape(r["canonical_room"] or "no matching rule")}</div></div>'
+            f'<div class="dir">{html.escape(r["direction"])}</div>'
+            f'<div><span class="pill" style="background:color-mix(in srgb,var({var}) 18%,transparent);'
+            f'color:var({var})">{html.escape(r["classification"])}</span>'
+            f'<div class="agree">{agreement}</div></div>'
+            f'<div class="note">{html.escape(r["notes"] or "")}</div>'
+            f"</div>"
+        )
+    st.markdown("".join(rows), unsafe_allow_html=True)
+
+    cited = sorted({s for r in room_results for s in r.get("sources", [])})
+    if cited:
+        with st.expander(f"Sources cited ({len(cited)})"):
+            for title in cited:
+                st.markdown(f"- {title}")
     st.caption(
-        "Vastu is not a codified standard — classical sources genuinely disagree. "
-        "'Source agreement' shows how many of the cited texts back each verdict."
+        "Vastu is not a codified standard — classical sources genuinely disagree, and most "
+        "state where a room *should* go rather than where it must not. A room outside every "
+        "stated zone is judged by how far it sits from the nearest preferred one."
     )
 
 with tab_remodel:
     st.markdown(
-        "Each option below is cumulative — 25% fixes only the worst violation, "
+        "Each option is cumulative — 25% fixes only the worst violation, "
         "100% addresses every one."
     )
     if not tiers["100"]:
@@ -230,10 +330,9 @@ with tab_remodel:
         row2 = st.columns(2)
         for col, pct in zip(row1 + row2, ("25", "50", "75", "100")):
             with col:
-                st.markdown(f'<div class="tier-head">{pct}% remodel</div>', unsafe_allow_html=True)
                 st.markdown(
-                    f'<div class="tier-sub">{_TIER_CAPTION[pct]} · '
-                    f'{len(tiers[pct])} room(s)</div>',
+                    f'<div class="tier"><div class="t">{pct}% remodel</div>'
+                    f'<div class="c">{_TIER_CAPTION[pct]} · {len(tiers[pct])} room(s)</div></div>',
                     unsafe_allow_html=True,
                 )
                 st.image(
