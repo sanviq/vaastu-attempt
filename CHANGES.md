@@ -25,8 +25,15 @@ unchanged — anything calling the old API still works.
 | 1.5 | **Added public `ocr_available()`** — actually invokes `pytesseract.get_tesseract_version()` rather than just checking the import. | The pip package importing does not mean the Tesseract *binary* exists. Without the binary every room silently becomes "Room N", nothing matches a rule, and the plan scores as Moderate — a plausible-looking but meaningless result. The UI now says so out loud. |
 | 1.6 | `HoughLinesP` unpacking now goes through `np.asarray(line).reshape(-1)`. | OpenCV 5 changed the return shape from `(N, 1, 4)` to `(N, 4)`; the old unpack raised `TypeError: cannot unpack non-iterable numpy.int32 object`. Originally fixed on `fix/opencv5-houghlines-unpack`, merged in here. |
 
-**Measured effect on the 8-room test plan:** 49 boxes → **8**; correct labels **0/8 → 8/8**;
-classifications went from uniformly "Moderate" to a genuine 5 Moderate / 3 Non-Compliant split.
+| 1.7 | **Room finding rewritten again — detection is now label-first** (`_find_room_labels` → `_collect_words` → `_group_words`, then `_box_for_label`). The printed room names are read off the whole plan and *become* the room list; segmentation is demoted to supplying each label a bounding box. Both older strategies are retained as fallbacks when fewer than 2 labels are readable. | **Real bug, found on the first real blueprint.** Segmentation assumes rooms are enclosed, but real plans draw doorways as gaps — so the floor is one connected blob. On the 30x40 test plan it returned 15 "rooms": wardrobe niches, a sitting space, a stair cell, and one L-shaped region leaking across 55% of the sheet. See §4 for the measured effect. |
+| 1.8 | **`_text_mask`** removes everything that is not glyph-sized before OCR. | Wall strokes and hatching next to a label wreck the read. This is the only pass that finds KITCHEN on the test plan. |
+| 1.9 | **`_ocr_scales`** picks the upscale factor from the *sheet* size, capped at ~4200px on the long side. | The old per-crop scaling targeted 200px on the crop's short side, which gave a 119px-wide kitchen a factor of 1.7 — nowhere near enough for 8px lettering. This is the single biggest reason labels were unreadable. |
+| 1.10 | **`_collect_words` unions 8 OCR passes** (2 preprocessors × 2 scales × psm 6 and 11), deduplicating by position and keeping the most confident read. | No single combination finds everything: the glyph mask is the only one that reads KITCHEN, plain Otsu the only one that reads the lower BEDROOM. Union + vocabulary filtering beats tuning one pass. Costs ~4s, cached by `@st.cache_data`. |
+| 1.11 | **Vocabulary split into `_HEAD_WORDS` and `_MODIFIER_WORDS`**; a phrase is only a room if it contains a head word. | This is what drops "WARDROBE", "TV UNIT", "SITTING SPACE" and "OPEN AREA" — drawn on plans, but not rooms to be judged. Directly fixes "it's considering things like sitting space as a room". |
+| 1.12 | **Fuzzy matching now requires the first character to agree** (cutoff 0.78, was a blanket 0.8). | Tesseract garbles interior glyphs constantly ("BEDROpPM", "PUA") but rarely the leading one. Meanwhile "All", from the plan's "All Size House Plans" watermark, scores 0.86 against "hall" and invented a second living room mid-plan. |
+| 1.13 | **`_box_for_label` takes the *largest* containing region under 30% of the sheet**, not the smallest, and synthesises a box when nothing qualifies. | Smallest reliably picked a wardrobe sub-cell drawn inside the room; the 30% cap rejects the leaking region. |
+
+**Measured effect on the 8-room synthetic plan:** 49 boxes → **8**; correct labels **0/8 → 8/8**.
 Blank image → 0 rooms, no crash.
 
 ### `overlay.py`
@@ -44,6 +51,9 @@ Rewritten visually. No behavioural contract broken — both functions still take
 | 2.6 | **Arrow tips are clamped** inside their own room box. | A south-facing arrow on a bottom-row room used to shoot out of the plan and into the legend band. |
 | 2.7 | **Dropped `bbox_inches="tight"`** from `_fig_to_rgb`; dpi fixed at 100. | `tight` crops each figure to its own content, so the four remodel tiers came out at *different sizes* and the 2×2 grid looked ragged. All four are now identical dimensions. |
 | 2.8 | Replaced the `ax.set_title(backgroundcolor=...)` banner with the proper header band. Removed the now-unused `math` import and dead `img_h/img_w` locals. | Cosmetic + tidy. |
+| 2.9 | **Every plan is resampled to a fixed 1000px render width** (`_load_plan`), and all band heights, font sizes and swatches are now absolute pixel constants instead of fractions of the plan width. Callers scale bboxes via `_scale_box`. | **This is why the UI looked crude.** A 454px-wide upload was annotated with 5pt text and 2px borders, then stretched to ~1400px in the browser — magnifying every label, chip and line with it. Output is now identical whatever the upload resolution. |
+| 2.10 | Legend caption is **only drawn if it fits** beside the colour key. | On a narrow plan "Zones follow the Vastu Purusha Mandala" printed straight through "Non-Compliant". |
+| 2.11 | Fill alpha `0.13`→`0.10`, border `2.0`→`1.6`, chip padding and minimum box size retuned. | The tinted boxes were dominating the drawing they are supposed to annotate. |
 
 ### `requirements.txt`
 
@@ -74,11 +84,43 @@ Rewritten visually. No behavioural contract broken — both functions still take
 | # | Change | Why |
 |---|---|---|
 | 5.1 | `bbox` is now passed through `_classify_room` (both return paths) and `generate_remodel_tiers`. | **Contract gap.** `overlay.py` reads `bbox` off these dicts; without it `draw_overlay` skipped every room and `draw_remodel_tier` fell back to a generic banner. Nothing rendered. |
+| 5.2 | Added `hall` and `lounge` to the `Drawing / living room` keywords. | Indian plans almost always print the main living room as "HALL", so the largest room in the house matched no rule at all. |
+| 5.3 | `generate_remodel_tiers` now **excludes rooms with no matching rule** from the violation list. | PARKING has no rule in the dataset, so it was listed as a remodel step with a blank target direction — a row telling the user to move a room somewhere unspecified. |
+
+### `app.py` — display sizing
+
+| # | Change | Why |
+|---|---|---|
+| 6.1 | Overlay is shown at its natural width in a centred column (capped 920px) rather than `use_container_width=True`; page max-width 1400→1180px; hero and tier captions scaled down. | Streamlit was stretching the rendered overlay across the full container, undoing the fixed render width in 2.9. |
 
 ---
 
-## 3. Still open
+## 3. Measured effect on the real blueprint
 
-- Validation used a **synthetic** labelled plan (`real_plan.png`), not a real blueprint. Needs a run against an actual plan before demo.
-- Segmentation assumes rooms are *enclosed*. Plans with wide doorway gaps may merge two rooms into one region — the fallback path does not catch this because segmentation still returns ≥2 boxes.
-- History contains one ugly `wip ui` commit (`04c545c`). A squash-merge cleans it up; not force-pushed since the branch is shared.
+Run against `30X40 NORTH FACING HOUSE PLANS`, the first genuine blueprint tested.
+
+| | Before | After |
+|---|---|---|
+| Rooms found | 15 (wardrobes, sitting space, stair cell, one 55% leak) | **8** — every real room, nothing spurious |
+| Labels read | 1 usable (`TOILET`); rest `Room N`, plus `BEDRODM PARKIN` and `TOWLET` | **8/8 correct** |
+| Matched to a Vastu rule | 1/15 | **7/8** (only PARKING unmatched — correctly, the dataset has no parking rule) |
+| Directions | meaningless (boxes were furniture) | KITCHEN NW · BEDROOM NE · TOILET N · TOILET E · HALL C · PARKING SE · BEDROOM SW · PUJA S — all correct |
+| Remodel tiers | 4 identical screens | 2 / 3 / 5 / 6 rooms — genuinely different |
+| Overall score | 53.3% (meaningless) | 56.2% |
+
+Also verified: rotating `north_angle` to 90° shifts all 8 directions consistently; a blank
+image yields 0 rooms without crashing; the synthetic plan still reads 8/8 including the
+multi-word `MASTER BEDROOM`, `PUJA ROOM` and `LIVING HALL`; Streamlit boots clean (HTTP 200).
+
+---
+
+## 4. Still open
+
+- OCR now costs ~4s per new upload (8 Tesseract passes). Cached per file, so it is paid once.
+- The label-first path needs ≥2 readable labels. Scans and handwritten plans fall through to
+  the old segmentation path, which is still weak on plans with open doorways.
+- Room boxes come from segmentation where one fits and are otherwise approximated around the
+  label, so a box occasionally covers slightly more than the room. Position and direction are
+  taken from the label anchor, so the *verdict* is unaffected — only the drawn rectangle.
+- History contains one ugly `wip ui` commit (`04c545c`). A squash-merge cleans it up; not
+  force-pushed since the branch is shared.

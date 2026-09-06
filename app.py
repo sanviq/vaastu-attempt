@@ -22,13 +22,13 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 2.5rem; max-width: 1400px; }
-      .hero { border-radius: 14px; padding: 1.6rem 1.8rem; margin-bottom: 1.4rem;
+      .block-container { padding-top: 2rem; max-width: 1180px; }
+      .hero { border-radius: 12px; padding: 1.1rem 1.4rem; margin-bottom: 1.1rem;
               background: linear-gradient(135deg, #1e3a5f 0%, #2d5a8c 100%); }
-      .hero h1 { color: #fff; margin: 0 0 .35rem 0; font-size: 1.9rem; }
-      .hero p  { color: #cfe0f5; margin: 0; font-size: .95rem; }
-      .tier-head { font-weight: 700; font-size: 1rem; margin: .2rem 0 .1rem 0; }
-      .tier-sub  { color: #8b98a8; font-size: .82rem; margin-bottom: .5rem; }
+      .hero h1 { color: #fff; margin: 0 0 .25rem 0; font-size: 1.45rem; }
+      .hero p  { color: #cfe0f5; margin: 0; font-size: .88rem; }
+      .tier-head { font-weight: 700; font-size: .95rem; margin: .2rem 0 .1rem 0; }
+      .tier-sub  { color: #8b98a8; font-size: .78rem; margin-bottom: .5rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -153,10 +153,10 @@ room_results = result["room_results"]
 
 if not room_results:
     st.error(
-        "**No rooms could be detected in this plan.** The detector looks for floor "
-        "areas fully enclosed by walls, so this usually means the walls are drawn "
-        "too faintly, or the image is a photo rather than a clean blueprint. "
-        "Try a higher-resolution export with solid black wall lines."
+        "**No rooms could be detected in this plan.** Rooms are found by reading the "
+        "printed room names (KITCHEN, BEDROOM, TOILET…) off the drawing, so this "
+        "usually means the labels are too small to read, handwritten, or absent. "
+        "Try a higher-resolution export where the room names are clearly legible."
     )
     st.stop()
 
@@ -188,7 +188,13 @@ tab_overview, tab_rooms, tab_remodel = st.tabs(
 )
 
 with tab_overview:
-    st.image(draw_overlay(image_path, room_results, north_angle), use_container_width=True)
+    # Rendered at its natural size, not stretched to the container. overlay.py
+    # draws at a fixed ~1000px width; letting Streamlit scale that up again is
+    # what made the labels and borders look coarse.
+    overlay_img = draw_overlay(image_path, room_results, north_angle)
+    pad_l, mid, pad_r = st.columns([1, 8, 1])
+    with mid:
+        st.image(overlay_img, width=min(920, overlay_img.shape[1]))
 
 with tab_rooms:
     st.dataframe(

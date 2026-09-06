@@ -60,8 +60,21 @@ _DEFAULT_COLOUR = "#64748b"
 _INK = "#0f172a"          # near-black for body text
 _MUTED = "#64748b"        # secondary text
 _BAND = "#f1f5f9"         # header / footer band fill
-_FILL_ALPHA = 0.13        # low: the blueprint underneath must stay readable
-_BORDER_LW = 2.0
+_RULE = "#e2e8f0"         # hairline separating band from plan
+_FILL_ALPHA = 0.10        # low: the blueprint underneath must stay readable
+_BORDER_LW = 1.6
+
+# Every plan is resampled to this width before annotating, so all the sizes
+# below are absolute and the output is consistent across uploads.
+_RENDER_W = 1000.0
+_RENDER_MAX_H = 1300.0
+
+_HEADER_H = 58            # title + compass rose
+_FOOTER_H = 40            # colour key
+_TITLE_FS = 15.0
+_SUB_FS = 9.5
+_LEGEND_FS = 9.0
+_CHIP_FS_MIN, _CHIP_FS_MAX = 6.5, 11.0
 
 # Compass bearing (degrees clockwise from North) at the centre of each zone.
 _DIR_BEARING: dict[str, float] = {
@@ -80,6 +93,35 @@ def _load_rgb(image_path: str) -> np.ndarray:
     if img_bgr is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
     return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+
+def _load_plan(image_path: str) -> tuple[np.ndarray, float]:
+    """
+    Load the plan resampled to a fixed render width, plus the scale applied.
+
+    Every size below — band heights, font sizes, swatches — is in pixels of this
+    canonical canvas, so the output looks the same whatever the upload's
+    resolution. Drawing at the source resolution instead is what made the result
+    look crude: a 454px-wide plan was annotated with 5pt text and then stretched
+    to about 1400px in the browser, magnifying every label and border with it.
+
+    Callers must scale incoming bboxes by the returned factor.
+    """
+    rgb = _load_rgb(image_path)
+    h, w = rgb.shape[:2]
+    scale = min(_RENDER_W / w, _RENDER_MAX_H / h)
+    if abs(scale - 1.0) < 0.02:
+        return rgb, 1.0
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    resized = cv2.resize(rgb, (max(1, round(w * scale)), max(1, round(h * scale))),
+                         interpolation=interp)
+    return resized, scale
+
+
+def _scale_box(bbox, scale: float) -> tuple[float, float, float, float]:
+    """Convert a detection bbox from source pixels to render pixels."""
+    x, y, w, h = bbox
+    return x * scale, y * scale, w * scale, h * scale
 
 
 def _bearing_to_vector(direction: str, north_angle: float) -> tuple[float, float]:
@@ -140,70 +182,62 @@ def _band(ax: plt.Axes, x: float, y: float, w: float, h: float) -> None:
 
 
 def _draw_header(
-    ax: plt.Axes, w: int, header: int, title: str, subtitle: str, north_angle: float
+    ax: plt.Axes, w: float, title: str, subtitle: str, north_angle: float
 ) -> None:
     """Title block across the top, with a compass rose showing which way North is."""
-    _band(ax, 0, 0, w, header)
+    _band(ax, 0, 0, w, _HEADER_H)
+    ax.add_patch(mpatches.Rectangle((0, _HEADER_H - 1), w, 1,
+                                    facecolor=_RULE, edgecolor="none", zorder=3))
 
-    pad = header * 0.22
-    ax.text(
-        pad, header * 0.40, title,
-        fontsize=header * 0.26, color=_INK, fontweight="bold",
-        va="center", ha="left", zorder=3,
-    )
-    ax.text(
-        pad, header * 0.72, subtitle,
-        fontsize=header * 0.18, color=_MUTED, va="center", ha="left", zorder=3,
-    )
+    pad = 16.0
+    ax.text(pad, _HEADER_H * 0.38, title, fontsize=_TITLE_FS, color=_INK,
+            fontweight="bold", va="center", ha="left", zorder=3)
+    ax.text(pad, _HEADER_H * 0.72, subtitle, fontsize=_SUB_FS, color=_MUTED,
+            va="center", ha="left", zorder=3)
 
-    # Compass rose, right-aligned in the band. Radii are kept inside the band
-    # height or the "N" gets clipped off the top of the canvas.
-    ring = header * 0.38
-    r = header * 0.20
-    cx, cy = w - header * 0.60, header * 0.5
+    # Compass rose, right-aligned. Radii stay inside the band height or the "N"
+    # gets clipped off the top of the canvas.
+    ring, r = 21.0, 11.0
+    cx, cy = w - 34.0, _HEADER_H * 0.5
     ax.add_patch(mpatches.Circle((cx, cy), ring, facecolor="white",
                                  edgecolor="#cbd5e1", linewidth=1.0, zorder=3))
     dx, dy = _bearing_to_vector("N", north_angle)
     ax.annotate(
         "", xy=(cx + dx * r, cy + dy * r), xytext=(cx - dx * r, cy - dy * r),
-        arrowprops=dict(arrowstyle="-|>", color=_INK, lw=1.4, mutation_scale=header * 0.20),
+        arrowprops=dict(arrowstyle="-|>", color=_INK, lw=1.3, mutation_scale=11),
         zorder=4,
     )
     ax.text(
-        cx + dx * r * 1.45, cy + dy * r * 1.45, "N",
-        fontsize=header * 0.16, color=_INK, fontweight="bold",
+        cx + dx * r * 1.5, cy + dy * r * 1.5, "N",
+        fontsize=8.0, color=_INK, fontweight="bold",
         ha="center", va="center", zorder=5,
         bbox=dict(boxstyle="circle,pad=0.10", facecolor="white",
                   edgecolor="none", alpha=0.9),
     )
 
 
-def _draw_legend(ax: plt.Axes, w: int, y0: int, footer: int, note: str) -> None:
-    """Colour key across the bottom."""
-    _band(ax, 0, y0, w, footer)
+def _draw_legend(ax: plt.Axes, w: float, y0: float, note: str) -> None:
+    """Colour key across the bottom, with the caption only if it actually fits."""
+    _band(ax, 0, y0, w, _FOOTER_H)
+    ax.add_patch(mpatches.Rectangle((0, y0), w, 1,
+                                    facecolor=_RULE, edgecolor="none", zorder=3))
 
-    swatch = footer * 0.30
-    fs = footer * 0.26
-    char_w = fs * 0.83          # ~0.6 em wide at dpi 100, see _fit_fontsize
-    x = footer * 0.45
+    swatch = 11.0
+    char_w = _LEGEND_FS * 0.83   # ~0.6 em wide at dpi 100, see _fit_fontsize
+    mid = y0 + _FOOTER_H * 0.5
+    x = 16.0
     for label, colour in _COLOURS.items():
-        ax.add_patch(
-            mpatches.Rectangle(
-                (x, y0 + footer * 0.32), swatch, swatch,
-                facecolor=colour, edgecolor="none", zorder=3,
-            )
-        )
-        ax.text(
-            x + swatch * 1.6, y0 + footer * 0.47, label,
-            fontsize=fs, color=_INK, va="center", ha="left", zorder=3,
-        )
-        x += swatch * 1.6 + len(label) * char_w + footer * 0.9
+        ax.add_patch(mpatches.Rectangle((x, mid - swatch / 2), swatch, swatch,
+                                        facecolor=colour, edgecolor="none", zorder=3))
+        ax.text(x + swatch * 1.7, mid, label, fontsize=_LEGEND_FS, color=_INK,
+                va="center", ha="left", zorder=3)
+        x += swatch * 1.7 + len(label) * char_w + 22.0
 
-    if note:
-        ax.text(
-            w - footer * 0.45, y0 + footer * 0.47, note,
-            fontsize=footer * 0.22, color=_MUTED, va="center", ha="right", zorder=3,
-        )
+    # The caption is decoration; dropping it beats overprinting the key, which is
+    # what happened when it was drawn unconditionally on a narrow plan.
+    if note and w - x > len(note) * _LEGEND_FS * 0.62 + 16.0:
+        ax.text(w - 16.0, mid, note, fontsize=8.0, color=_MUTED,
+                va="center", ha="right", zorder=3)
 
 
 def _fit_fontsize(text: str, box_w: float, lo: float, hi: float) -> float:
@@ -249,33 +283,27 @@ def _draw_room_box(
     )
 
     # Tiny slivers cannot hold legible text; the coloured border still reads.
-    if w < 34 or h < 22:
+    if w < 46 or h < 26:
         return
 
-    fs = _fit_fontsize(title, w, 5.0, 11.0)
+    fs = _fit_fontsize(title, w, _CHIP_FS_MIN, _CHIP_FS_MAX)
     ax.text(
-        x + w / 2, y + fs * 0.9, title,
+        x + w / 2, y + fs * 1.5, title,
         fontsize=fs, color="white", fontweight="bold",
         ha="center", va="center", clip_on=True, zorder=5,
-        bbox=dict(boxstyle="round,pad=0.30", facecolor=colour,
-                  edgecolor="none", alpha=0.95),
+        bbox=dict(boxstyle="round,pad=0.32", facecolor=colour,
+                  edgecolor="none", alpha=0.94),
     )
 
-    if subtitle and h > fs * 4:
-        sub_fs = _fit_fontsize(subtitle, w, 4.0, fs * 0.85)
+    if subtitle and h > fs * 5:
+        sub_fs = _fit_fontsize(subtitle, w, 5.5, fs * 0.88)
         ax.text(
-            x + w / 2, y + fs * 2.7, subtitle,
+            x + w / 2, y + fs * 3.5, subtitle,
             fontsize=sub_fs, color=_INK,
             ha="center", va="center", clip_on=True, zorder=5,
-            bbox=dict(boxstyle="round,pad=0.22", facecolor="white",
-                      edgecolor="none", alpha=0.80),
+            bbox=dict(boxstyle="round,pad=0.24", facecolor="white",
+                      edgecolor="none", alpha=0.82),
         )
-
-
-def _bands_for(rgb: np.ndarray) -> tuple[int, int]:
-    """Header / footer heights that scale with the plan so text stays legible."""
-    w = rgb.shape[1]
-    return max(48, int(w * 0.075)), max(34, int(w * 0.050))
 
 
 # ---------------------------------------------------------------------------
@@ -292,10 +320,9 @@ def draw_overlay(
 
     Returns an RGB numpy array suitable for st.image().
     """
-    rgb = _load_rgb(image_path)
+    rgb, scale = _load_plan(image_path)
     plan_h, plan_w = rgb.shape[:2]
-    header, footer = _bands_for(rgb)
-    canvas = _pad_canvas(rgb, header, footer)
+    canvas = _pad_canvas(rgb, _HEADER_H, _FOOTER_H)
     fig, ax = _make_figure(canvas)
 
     counts = {k: 0 for k in _COLOURS}
@@ -308,12 +335,12 @@ def draw_overlay(
         bbox = room.get("bbox")
         if not bbox:
             continue
-        x, y, w, h = bbox
+        x, y, w, h = _scale_box(bbox, scale)
         classification = room.get("classification", "")
         colour = _COLOURS.get(classification, _DEFAULT_COLOUR)
         _draw_room_box(
             ax,
-            x, y + header, w, h,            # shift down past the header band
+            x, y + _HEADER_H, w, h,         # shift down past the header band
             colour,
             str(room.get("room_label", "?"))[:24],
             f"{room.get('direction', '')} · {classification}",
@@ -321,14 +348,14 @@ def draw_overlay(
 
     n = len(room_results)
     _draw_header(
-        ax, plan_w, header,
+        ax, plan_w,
         "Vastu compliance overlay",
         f"{n} room(s) analysed · {counts['Compliant']} compliant · "
         f"{counts['Moderate']} moderate · {counts['Non-Compliant']} non-compliant",
         north_angle,
     )
     _draw_legend(
-        ax, plan_w, header + plan_h, footer,
+        ax, plan_w, _HEADER_H + plan_h,
         "Zones follow the Vastu Purusha Mandala",
     )
     return _fig_to_rgb(fig)
@@ -351,10 +378,9 @@ def draw_remodel_tier(
 
     Returns an RGB numpy array.
     """
-    rgb = _load_rgb(image_path)
+    rgb, scale = _load_plan(image_path)
     plan_h, plan_w = rgb.shape[:2]
-    header, footer = _bands_for(rgb)
-    canvas = _pad_canvas(rgb, header, footer)
+    canvas = _pad_canvas(rgb, _HEADER_H, _FOOTER_H)
     fig, ax = _make_figure(canvas)
 
     for suggestion in tier_suggestions:
@@ -367,12 +393,12 @@ def draw_remodel_tier(
         suggested_dir = suggestion.get("suggested_direction") or "—"
 
         if bbox:
-            x, y, w, h = bbox
+            x, y, w, h = _scale_box(bbox, scale)
         else:
             # No bbox — fall back to a banner strip rather than dropping the room.
-            x, y = plan_w // 4, 8
-            w, h = plan_w // 2, max(52, int(plan_h * 0.07))
-        y += header
+            x, y = plan_w / 4, 8.0
+            w, h = plan_w / 2, max(52.0, plan_h * 0.07)
+        y += _HEADER_H
 
         _draw_room_box(
             ax, x, y, w, h, colour,
@@ -401,13 +427,13 @@ def draw_remodel_tier(
 
     n = len(tier_suggestions)
     _draw_header(
-        ax, plan_w, header,
+        ax, plan_w,
         "Remodelling plan",
         f"{n} room(s) addressed · arrows show the recommended direction",
         north_angle,
     )
     _draw_legend(
-        ax, plan_w, header + plan_h, footer,
+        ax, plan_w, _HEADER_H + plan_h,
         "Arrow = move this room toward that zone",
     )
     return _fig_to_rgb(fig)

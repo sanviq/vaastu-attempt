@@ -27,7 +27,8 @@ _ROOM_KEYWORDS = [
     (("bathroom", "washroom", "bath"), "Bathroom"),
     (("kitchen",), "Kitchen"),
     (("dining",), "Dining room"),
-    (("drawing", "living"), "Drawing / living room"),
+    # Indian plans almost always print the main living room as "HALL".
+    (("drawing", "living", "hall", "lounge"), "Drawing / living room"),
     (("puja", "pooja", "meditation", "prayer"), "Puja / meditation room"),
     (("study",), "Study room"),
     (("basement",), "Basement"),
@@ -137,7 +138,15 @@ def score_layout(rooms: list) -> dict:
 
 
 def generate_remodel_tiers(room_results: list) -> dict:
-    violations = [r for r in room_results if r["classification"] != "Compliant"]
+    # A room the dataset has no rule for cannot be "fixed" — it was only marked
+    # Moderate because nothing was known about it. Listing it as a remodel step
+    # with a blank target direction is noise, so it is left out.
+    violations = [
+        r for r in room_results
+        if r["classification"] != "Compliant"
+        and r["canonical_room"]
+        and _best_direction(r["canonical_room"])
+    ]
     # Worst first: Non-Compliant before Moderate, then by how corroborated the broken rule is.
     violations.sort(key=lambda r: (r["classification"] == "Moderate", -r["agreement_level"]))
 
