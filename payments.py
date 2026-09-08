@@ -220,9 +220,12 @@ def render_checkout(order: dict[str, Any]) -> None:
         }}
 
         function openCheckout() {{
-          const base = topWin.location.origin + topWin.location.pathname;
-          options.callback_url = base + "?plan=" + encodeURIComponent(planId);
-          options.redirect = true;
+          // No redirect:true / callback_url here on purpose — that combination
+          // makes Razorpay do a server-side POST to callback_url instead of
+          // calling this handler, and Streamlit's server returns "Method Not
+          // Allowed" on that POST because it only serves GET. The handler
+          // below does a client-side JS redirect (a GET), which is what
+          // handle_payment_return() in this file is built to parse.
           options.handler = redirectAfterPay;
           options.modal = {{ ondismiss: function () {{}} }};
           const rzp = new topWin.Razorpay(options);

@@ -184,6 +184,8 @@ if "checkout_opened_for" not in st.session_state:
 if "last_order" not in st.session_state:
     st.session_state.last_order = None
 
+cleanup_stray_payment_params()
+
 if handle_payment_return():
     st.toast(f"Payment successful — {st.session_state.plan_tier.title()} plan unlocked.", icon="✅")
     st.rerun()
