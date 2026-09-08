@@ -135,3 +135,53 @@ multi-word `MASTER BEDROOM`, `PUJA ROOM` and `LIVING HALL`; Streamlit boots clea
   taken from the label anchor, so the *verdict* is unaffected — only the drawn rectangle.
 - History contains one ugly `wip ui` commit (`04c545c`). A squash-merge cleans it up; not
   force-pushed since the branch is shared.
+
+---
+
+## 5. Sidebar navigation, plans and About page
+
+All in `app.py` (Sanvi's file). No change to `detection.py`, `overlay.py`,
+`rules_engine.py` or the rules CSV in this round.
+
+| # | Change | Why |
+|---|---|---|
+| 7.1 | Added a sidebar with a three-way nav: **Analyser · Pricing · About** | The analyser calls `st.stop()` when no plan is uploaded, so anything rendered after it was unreachable until you uploaded a file. Pricing and About have to exist before that point. |
+| 7.2 | Moved the analyser body into `render_analyser()`, added `render_pricing()` and `render_about()`, dispatched from a `_PAGES` dict | Three top-level pages need three entry points. Analysis logic is unchanged — only indented. |
+| 7.3 | Added an **About** page: what the tool is, a four-step "how it works", the rule set (13 room types, 5 published works, listed by title), who built it, mentor, contact, and a liability disclaimer | Asked for. The source list is read off the same CSV the engine uses, so the page cannot drift from the rules. |
+| 7.4 | Added a **Pricing** page: Free vs Pro cards, feature lists, `PRICE` constant at the top of the file | Asked for. Pricing is a single constant so it changes in one place. |
+| 7.5 | Gated remodel tiers — Free gets **25%**, Pro gets all four; locked panel + upgrade CTA in the Remodelling tab | Gives away the diagnosis, charges for the full prescription. Free still ends in something actionable rather than a dead end. |
+| 7.6 | Free 25% tier renders in a half-width column | Alone at full width it was the only oversized plan in the app — the same stretched look fixed in round 4. |
+| 7.7 | Repainted Streamlit's primary button in `--accent` | Default Streamlit red read as a warning next to the red *Non-Compliant* verdict pills. |
+| 7.8 | `.who.one` caps a single-person card at one column width | A lone card in an `auto-fit` grid stretched full width and read as a banner. |
+| 7.9 | Rewrote `.gitignore` | Its git blob (`7a60b85`) was missing from the object store in the working clone — `git fsck` reported it. Content is identical (`__pycache__/`, `*.pyc`). |
+
+### On the billing
+
+**This is demo billing and nothing more.** `st.session_state.pro` is a session flag.
+There is no gateway, no account, no database, and **no payment field of any kind** — the
+upgrade is a single button, deliberately not a card form, because a realistic-looking
+card-entry screen is the wrong thing for a demo build to ship. Pro resets on reload.
+Both the sidebar and the Pricing page say so in plain language.
+
+Making this real is not a matter of swapping the button. It needs, in order:
+
+1. **Accounts** — a subscription has to belong to someone. Streamlit has no auth.
+2. **A database** — subscription state must outlive the session.
+3. **A gateway** — hosted checkout, so card details are entered on the gateway's page
+   and never touch this app.
+4. **Legal** — terms, refund policy, and the disclaimer already on the About page.
+
+Steps 1 and 2 are the real work; step 3 is the small part. Deferred until hosting is settled.
+
+### Placeholders left in `app.py`
+
+- `PRICE` / `PRICE_PERIOD` — `₹299/month`, provisional.
+- About → Mentor: `[Full name]`, `[Designation, Department]`, `[Institution]`, `[email]`.
+- About → Contact: `[your email]`.
+
+### Verified
+
+Ran against the same `30X40 NORTH FACING HOUSE PLANS` blueprint: score still 42.9% on
+8 rooms, overlay unchanged, all three nav pages render, Free shows one tier plus the lock
+panel, upgrading switches the sidebar to **Pro** and renders all four tiers two-up, and
+"Switch back to Free" re-locks them.
