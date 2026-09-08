@@ -13,9 +13,18 @@ import streamlit as st
 from detection import detect_rooms, ocr_available
 from rules_engine import score_layout, generate_remodel_tiers
 from overlay import draw_overlay, draw_remodel_tier
+from payments import (
+    TEST_CARD,
+    cleanup_stray_payment_params,
+    create_order,
+    handle_payment_return,
+    is_configured,
+    render_checkout,
+    sync_pending_payment,
+)
 
 st.set_page_config(
-    page_title="Vastu Blueprint Compliance Checker",
+    page_title="VAASTU WISE",
     page_icon="🧭",
     layout="wide",
 )
@@ -162,15 +171,41 @@ st.markdown(
 # ---------------------------------------------------------------------------
 # Plan state
 # ---------------------------------------------------------------------------
-# Demo billing only. Nothing here talks to a payment gateway and no payment
-# details are collected anywhere in this app — upgrading flips a session flag so
-# the gated views can be shown during a walkthrough. It resets on reload, which
-# is exactly what a demo wants. Wiring a real gateway means replacing this flag
-# with a per-user subscription record; see the note in CHANGES.md.
+# Paid access is session-scoped. With Razorpay keys configured, upgrading runs
+# through real test-mode checkout; without keys it falls back to one-click demo.
 if "pro" not in st.session_state:
     st.session_state.pro = False
+if "plan_tier" not in st.session_state:
+    st.session_state.plan_tier = None
+if "pending_checkout" not in st.session_state:
+    st.session_state.pending_checkout = None
+if "checkout_opened_for" not in st.session_state:
+    st.session_state.checkout_opened_for = None
+if "last_order" not in st.session_state:
+    st.session_state.last_order = None
 
-PRICE = "₹299"          # placeholder — set real pricing before launch
+if handle_payment_return():
+    st.toast(f"Payment successful — {st.session_state.plan_tier.title()} plan unlocked.", icon="✅")
+    st.rerun()
+
+if (
+    not st.session_state.pro
+    and is_configured()
+):
+    for pending in (
+        st.session_state.pending_checkout,
+        st.session_state.last_order,
+    ):
+        if pending and sync_pending_payment(pending):
+            st.toast(
+                f"Payment successful — {st.session_state.plan_tier.title()} plan unlocked.",
+                icon="✅",
+            )
+            st.rerun()
+            break
+
+PRICE_SMALL = "₹30"
+PRICE_BIG = "₹100"
 PRICE_PERIOD = "/month"
 
 _FREE_FEATURES = [
@@ -182,11 +217,19 @@ _FREE_FEATURES = [
     ("Unlimited plans", False),
 ]
 
-_PRO_FEATURES = [
+_SMALL_FEATURES = [
+    ("Apartment & small floor plans", True),
     ("Everything in Free", True),
     ("All four remodel tiers, side by side", True),
     ("50 / 75 / 100% remodel overlays", True),
-    ("Unlimited plans", True),
+    ("Unlimited small plans", True),
+]
+
+_BIG_FEATURES = [
+    ("Villa, bungalow & large floor plans", True),
+    ("Everything in Small", True),
+    ("All four remodel tiers, side by side", True),
+    ("Unlimited large plans", True),
     ("Priority support", True),
 ]
 
@@ -196,7 +239,7 @@ _PRO_FEATURES = [
 with st.sidebar:
     st.markdown(
         '<div style="font-size:1.05rem;font-weight:700;color:#fff;letter-spacing:-.3px;">'
-        "🧭 Vastu Checker</div>"
+        "🧭 VAASTU WISE</div>"
         '<div style="color:#6E6E9A;font-size:.72rem;margin-bottom:.9rem;">'
         "Blueprint compliance, with sources</div>",
         unsafe_allow_html=True,
@@ -205,23 +248,37 @@ with st.sidebar:
         "Section", ["Analyser", "Pricing", "About"], label_visibility="collapsed"
     )
 
-    plan_chip = (
-        '<span class="chip pro">Pro</span>' if st.session_state.pro
-        else '<span class="chip free">Free plan</span>'
+    if st.session_state.pro:
+        tier = (st.session_state.plan_tier or "paid").title()
+        plan_chip = f'<span class="chip pro">{tier} plan</span>'
+    else:
+        plan_chip = '<span class="chip free">Free plan</span>'
+    billing_chip = (
+        '<span class="chip demo">Test payments</span>'
+        if is_configured()
+        else '<span class="chip demo">Demo billing</span>'
     )
     st.markdown(
-        f'<div style="margin:.9rem 0 .5rem 0;">{plan_chip} '
-        '<span class="chip demo">Demo billing</span></div>',
+        f'<div style="margin:.9rem 0 .5rem 0;">{plan_chip} {billing_chip}</div>',
         unsafe_allow_html=True,
     )
     if st.session_state.pro:
         if st.button("Switch back to Free", use_container_width=True):
             st.session_state.pro = False
+            st.session_state.plan_tier = None
+            st.session_state.pop("payment_id", None)
+            st.session_state.pending_checkout = None
+            st.session_state.checkout_opened_for = None
             st.rerun()
-    st.caption(
-        "Billing is simulated for demonstration. No payment is taken and no card "
-        "details are collected."
-    )
+    if is_configured():
+        st.caption(
+            f"Razorpay test mode — use RuPay test card {TEST_CARD}, any future expiry, any CVV."
+        )
+    else:
+        st.caption(
+            "Demo mode — no real payment. Add Razorpay test keys in "
+            "`.streamlit/secrets.toml` to enable checkout."
+        )
 
 
 # Human-readable compass picker instead of a raw degree value.
@@ -317,16 +374,30 @@ def _feature_list(features) -> str:
     )
 
 
-def _upgrade_button(key: str, label: str = "Upgrade to Pro") -> None:
-    """
-    Simulated upgrade. Deliberately a single button and not a card form: this is a
-    demo, and a realistic-looking card-entry screen is the last thing a demo build
-    should ship. The real flow replaces this with a hosted gateway checkout, where
-    payment details are entered on the gateway's page and never on ours.
-    """
+def _pay_button(plan_id: str, key: str, label: str) -> None:
+    """Start Razorpay checkout, or instant demo unlock when keys are not set."""
     if st.button(label, key=key, type="primary", use_container_width=True):
-        st.session_state.pro = True
+        if is_configured():
+            try:
+                order = create_order(plan_id)
+                st.session_state.pending_checkout = order
+                st.session_state.last_order = order
+                st.session_state.checkout_opened_for = None
+            except Exception as exc:
+                st.error(f"Could not start checkout: {exc}")
+                return
+        else:
+            st.session_state.pro = True
+            st.session_state.plan_tier = plan_id
         st.rerun()
+
+    pending = st.session_state.get("pending_checkout")
+    if pending and pending.get("plan_id") == plan_id and is_configured():
+        if st.session_state.checkout_opened_for != pending["id"]:
+            st.session_state.checkout_opened_for = pending["id"]
+            render_checkout(pending)
+        else:
+            st.caption("Razorpay should open over the full page. Click Pay again if it did not.")
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +407,7 @@ def render_analyser() -> None:
     st.markdown(
         """
         <div class="hero">
-          <h1>🧭 Vastu Blueprint Compliance Checker</h1>
+          <h1>🧭 VAASTU WISE</h1>
           <p>Upload a floor plan. Each room is read off the drawing, placed on the Vastu Purusha
              Mandala, and checked against classical sources — with what to change, ranked by how
              much you are willing to remodel.</p>
@@ -514,7 +585,7 @@ def render_analyser() -> None:
             )
             pad_l, mid, pad_r = st.columns([1, 2, 1])
             with mid:
-                _upgrade_button("up_remodel", f"Unlock all remodel plans — {PRICE}{PRICE_PERIOD}")
+                _pay_button("small", "up_remodel", f"Unlock all remodel plans — from {PRICE_SMALL}{PRICE_PERIOD}")
 
 
 def _render_tier(image_path: str, tiers: dict, pct: str, north_angle: float) -> None:
@@ -537,14 +608,14 @@ def render_pricing() -> None:
         """
         <div class="hero">
           <h1>Plans</h1>
-          <p>Check any plan for free and see exactly where it stands. Pro is for when you
-             want the full set of remodelling options, not just the first fix.</p>
+          <p>Check any plan for free and see exactly where it stands. Paid plans unlock the full
+             set of remodelling options — priced by plan size.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    col_free, col_pro = st.columns(2)
+    col_free, col_small, col_big = st.columns(3)
     with col_free:
         st.markdown(
             '<div class="plan">'
@@ -556,32 +627,59 @@ def render_pricing() -> None:
             "</div>",
             unsafe_allow_html=True,
         )
-    with col_pro:
+    with col_small:
         st.markdown(
             '<div class="plan hi">'
-            '<span class="chip pro">Pro</span>'
-            "<h3>Fix a plan</h3>"
-            f'<div class="price">{PRICE}<small>{PRICE_PERIOD}</small></div>'
-            '<div class="blurb">Every remodelling route, ranked by how much work you want to do.</div>'
-            f"<ul>{_feature_list(_PRO_FEATURES)}</ul>"
+            '<span class="chip pro">Small</span>'
+            "<h3>Small plans</h3>"
+            f'<div class="price">{PRICE_SMALL}<small>{PRICE_PERIOD}</small></div>'
+            '<div class="blurb">Apartments, flats and compact floor plans.</div>'
+            f"<ul>{_feature_list(_SMALL_FEATURES)}</ul>"
             "</div>",
             unsafe_allow_html=True,
         )
         st.write("")
         if st.session_state.pro:
-            st.success("You are on Pro for this session.")
+            tier = (st.session_state.plan_tier or "paid").title()
+            st.success(f"You are on the {tier} plan for this session.")
         else:
-            _upgrade_button("up_pricing")
+            _pay_button("small", "up_pricing_small", f"Pay {PRICE_SMALL}{PRICE_PERIOD}")
+    with col_big:
+        st.markdown(
+            '<div class="plan hi">'
+            '<span class="chip pro">Big</span>'
+            "<h3>Big plans</h3>"
+            f'<div class="price">{PRICE_BIG}<small>{PRICE_PERIOD}</small></div>'
+            '<div class="blurb">Villas, bungalows and large residential layouts.</div>'
+            f"<ul>{_feature_list(_BIG_FEATURES)}</ul>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        if st.session_state.pro:
+            tier = (st.session_state.plan_tier or "paid").title()
+            st.success(f"You are on the {tier} plan for this session.")
+        else:
+            _pay_button("big", "up_pricing_big", f"Pay {PRICE_BIG}{PRICE_PERIOD}")
 
     st.write("")
-    st.markdown(
-        '<div class="note-box"><p><b>Demo billing.</b> This build simulates the upgrade so the '
-        "Pro views can be shown end to end. No payment is processed, no card or bank details are "
-        "collected, and Pro resets when you reload. Live payments will run through a hosted "
-        "gateway checkout, where card details are entered on the gateway's own page — never on "
-        "ours. Pricing above is a placeholder pending launch.</p></div>",
-        unsafe_allow_html=True,
-    )
+    if is_configured():
+        st.markdown(
+            '<div class="note-box"><p><b>Razorpay test mode.</b> Payments are real in Razorpay\'s '
+            "sandbox — no money leaves a real account. Use RuPay test card "
+            f"<b>{TEST_CARD}</b>, any future expiry, any CVV. After a successful payment the paid "
+            "plan unlocks for this browser session. For production you will switch to live keys "
+            "and add accounts so subscriptions survive a reload.</p></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="note-box"><p><b>Demo billing.</b> Razorpay keys are not configured, so '
+            "Pay buttons unlock the plan instantly with no checkout. To show real payment flow, "
+            "copy <code>.streamlit/secrets.toml.example</code> to "
+            "<code>.streamlit/secrets.toml</code> and add your Razorpay <b>test</b> API keys.</p></div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ---------------------------------------------------------------------------

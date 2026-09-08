@@ -14,6 +14,9 @@ plotly>=5.18.0
 # PDF support (optional — only needed for PDF uploads)
 pdf2image>=1.16.0
 
+# Payments (Razorpay — optional; demo mode works without keys)
+razorpay>=1.4.0
+
 # Numerical
 numpy>=1.24.0
 
