@@ -12,12 +12,19 @@ Contract (do not change shapes without messaging Sanvi immediately):
 
 Pipeline (each step guarded so a failure degrades gracefully):
     1. Load image (supports PNG/JPG; PDF -> first-page raster via pdf2image if present)
-    2. Pre-process: grayscale -> Gaussian blur -> adaptive threshold -> morphological close
-    3a. Contour detection (cv2.findContours) — external, area-filtered
-    3b. Hough Line Transform (cv2.HoughLinesP) — dominant wall lines -> room grid boxes
-        Both sources are merged; duplicates removed by IoU overlap check.
+    2. Build a wall mask (Otsu) and dilate it so hairline gaps in walls are sealed
+    3. Segment rooms as the enclosed floor regions *between* walls
+       (cv2.connectedComponentsWithStats on the inverted wall mask), filtered by
+       area and by whether the region touches the image edge (= outdoor space).
+       Fallback: if that yields almost nothing (open-plan drawings, broken walls)
+       drop back to the contour + Hough Line Transform grid below.
     4. OCR each room crop with Tesseract (falls back to room-number fallback if absent)
     5. Map each room centroid to a Vastu zone using the rotated Purusha Mandala grid
+
+Why segmentation, not a line grid, drives step 3: crossing every detected wall line
+produces boxes that span several rooms, so each OCR crop then contains text from
+several rooms at once and Tesseract returns unusable strings. Segmenting the floor
+regions gives one box per room, which fixes the labels as a side effect.
 
 Prototype constraints (match the brief):
     - Input is a clean, digitally-generated blueprint with consistent labels.
@@ -26,6 +33,7 @@ Prototype constraints (match the brief):
 
 from __future__ import annotations
 
+import difflib
 import math
 import re
 import warnings
@@ -49,6 +57,24 @@ except ImportError:
         RuntimeWarning,
         stacklevel=1,
     )
+
+
+def ocr_available() -> bool:
+    """
+    True only if the Tesseract *binary* can actually be run.
+
+    The pip package importing is not enough — without the system binary every
+    room silently falls back to "Room N", no rule matches, and the whole plan
+    scores as Moderate. The UI needs to be able to say so out loud rather than
+    show a plausible-looking but meaningless result.
+    """
+    if not _TESS_OK:
+        return False
+    try:
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
 
 # ---------------------------------------------------------------------------
 # Optional PDF rasteriser
@@ -164,6 +190,58 @@ def _preprocess(bgr: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Room segmentation — enclosed floor regions between walls (primary strategy)
+# ---------------------------------------------------------------------------
+
+def _wall_mask(bgr: np.ndarray) -> np.ndarray:
+    """
+    Return a mask where walls and printed text are white (255) and floor is black.
+
+    Otsu rather than adaptive threshold: blueprints are high-contrast line art, and
+    adaptive thresholding turns large blank floor areas into speckle, which then
+    fragments the floor regions we are about to segment.
+    """
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    _thresh, wall = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    # Seal hairline breaks so one room cannot leak into the next.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    return cv2.dilate(wall, kernel, iterations=1)
+
+
+def _segment_rooms(
+    bgr: np.ndarray,
+    min_area_fraction: float = 0.004,
+    max_area_fraction: float = 0.45,
+) -> list[tuple[int, int, int, int]]:
+    """
+    Return one (x, y, w, h) per enclosed floor region.
+
+    A room is a connected patch of floor fully enclosed by walls. Regions touching
+    the image border are the outdoor area around the building, not rooms, and
+    regions above max_area_fraction are usually the whole plan leaking through a
+    gap — both are dropped.
+    """
+    h, w = bgr.shape[:2]
+    total_area = h * w
+    interior = cv2.bitwise_not(_wall_mask(bgr))
+
+    count, _labels, stats, _cents = cv2.connectedComponentsWithStats(interior, connectivity=4)
+
+    boxes: list[tuple[int, int, int, int]] = []
+    for i in range(1, count):                      # 0 is the background label
+        x, y, bw, bh, area = (int(v) for v in stats[i])
+        fraction = area / total_area
+        if not (min_area_fraction <= fraction <= max_area_fraction):
+            continue
+        if x <= 1 or y <= 1 or x + bw >= w - 1 or y + bh >= h - 1:
+            continue                               # outdoor space
+        boxes.append((x, y, bw, bh))
+
+    boxes.sort(key=lambda b: (b[1], b[0]))
+    return boxes
+
+
+# ---------------------------------------------------------------------------
 # Contour detection — find room bounding boxes
 # ---------------------------------------------------------------------------
 
@@ -228,7 +306,8 @@ def _hough_room_boxes(
     v_positions: list[int] = []   # x-coords of vertical walls
 
     for line in lines:
-        x1, y1, x2, y2 = line[0]
+        # OpenCV <5 returns (N, 1, 4); OpenCV >=5 returns (N, 4) — flatten handles both.
+        x1, y1, x2, y2 = np.asarray(line).reshape(-1)
         dx, dy = abs(x2 - x1), abs(y2 - y1)
         if dx == 0 and dy == 0:
             continue
@@ -321,32 +400,331 @@ def _clean_ocr_text(raw: str) -> str:
     return cleaned
 
 
+# Words that alone identify a room type. A detected phrase must contain one of
+# these to be treated as a room — that is what keeps furniture callouts
+# ("WARDROBE", "TV UNIT") and bare qualifiers ("SITTING SPACE", "OPEN AREA") out
+# of the room list. Those are drawn on plans but are not rooms to be judged.
+_HEAD_WORDS = {
+    "kitchen", "bedroom", "toilet", "wc", "bath", "bathroom", "washroom",
+    "dining", "drawing", "living", "hall", "lounge", "puja", "pooja", "prayer",
+    "meditation", "study", "office", "library", "basement", "entrance", "foyer",
+    "lobby", "porch", "veranda", "verandah", "balcony", "terrace", "store",
+    "storage", "utility", "laundry", "pantry", "staircase", "stair", "stairs",
+    "parking", "garage", "courtyard", "passage", "corridor", "garden", "lawn",
+}
+
+# Words that refine a head word but never stand alone as a room.
+_MODIFIER_WORDS = {
+    "master", "guest", "children", "kids", "family", "common", "attached",
+    "open", "area", "space", "sitting", "sit", "dress", "dressing", "bed",
+    "room", "wash", "main", "front", "rear",
+}
+
+# Everything Tesseract is allowed to match against.
+_ROOM_VOCAB = _HEAD_WORDS | _MODIFIER_WORDS
+
+
+def _match_vocab(token: str) -> Optional[str]:
+    """
+    Map one OCR token to a vocabulary word, tolerating mild corruption.
+
+    A fuzzy match must agree on the first character. Tesseract garbles interior
+    glyphs constantly ("BEDROpPM", "PUA") but rarely loses the leading one, while
+    the false positives that matter are precisely the ones differing at the front:
+    "All", from the "All Size House Plans" watermark, scores 0.86 against "hall"
+    and invented a second living room in the middle of the test plan.
+    """
+    lowered = token.lower()
+    if lowered in _ROOM_VOCAB:
+        return lowered
+    candidates = [v for v in _ROOM_VOCAB if v[0] == lowered[0]]
+    close = difflib.get_close_matches(lowered, candidates, n=1, cutoff=0.78)
+    return close[0] if close else None
+
+
+def _has_head_word(words: list[str]) -> bool:
+    """
+    True if this phrase names an actual room.
+
+    Checked against the concatenated phrase as well as the individual words, so
+    that a label Tesseract splits as "BED" + "ROOM" still reads as a bedroom.
+    """
+    if any(w in _HEAD_WORDS for w in words):
+        return True
+    compact = "".join(words)
+    return any(head in compact for head in _HEAD_WORDS)
+
+
+def _sanitise_label(text: str) -> Optional[str]:
+    """
+    Keep only the tokens that look like real room words; return None if none do.
+
+    Tolerates mild OCR corruption ("KTCHEN") via close matching, but rejects
+    strings with no recognisable room word at all. Used by the per-crop fallback
+    path; the primary path goes through _find_room_labels.
+    """
+    tokens = [t for t in _clean_ocr_text(text).upper().split() if len(t) >= 2]
+    kept = [t for t in tokens if _match_vocab(t)]
+    if not kept or not _has_head_word([t.lower() for t in kept]):
+        return None
+    return " ".join(kept)
+
+
 def _ocr_crop(bgr: np.ndarray, x: int, y: int, w: int, h: int) -> Optional[str]:
     """
-    Run Tesseract on a padded crop of the image.
-    Returns cleaned text or None if OCR unavailable / empty result.
+    Run Tesseract on the interior of one room box.
+    Returns a sanitised label, or None if OCR is unavailable / found nothing usable.
     """
     if not _TESS_OK:
         return None
 
-    pad = 8
-    x0 = max(0, x - pad)
-    y0 = max(0, y - pad)
-    x1 = min(bgr.shape[1], x + w + pad)
-    y1 = min(bgr.shape[0], y + h + pad)
-    crop = bgr[y0:y1, x0:x1]
+    # Inset rather than pad: the surrounding walls and any label belonging to the
+    # neighbouring room are exactly what we do not want inside the crop.
+    inset = 4
+    x0, y0 = max(0, x + inset), max(0, y + inset)
+    x1, y1 = min(bgr.shape[1], x + w - inset), min(bgr.shape[0], y + h - inset)
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return None
 
-    # Upscale tiny crops to help Tesseract
-    if crop.shape[0] < 64 or crop.shape[1] < 64:
-        scale = max(64 / crop.shape[0], 64 / crop.shape[1])
+    crop = cv2.cvtColor(bgr[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+
+    # Tesseract is much steadier on ~200px-tall text regions than on raw crops.
+    scale = max(1.0, 200.0 / max(1, min(crop.shape[:2])))
+    if scale > 1.0:
         crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    _thresh, crop = cv2.threshold(crop, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
     try:
-        text = pytesseract.image_to_string(crop, config="--psm 6 --oem 3")
-        cleaned = _clean_ocr_text(text)
-        return cleaned if cleaned else None
+        # psm 11 (sparse text) suits a label floating in a mostly empty room.
+        text = pytesseract.image_to_string(crop, config="--psm 11 --oem 3")
     except Exception:
         return None
+    return _sanitise_label(text)
+
+
+# ---------------------------------------------------------------------------
+# Whole-plan label detection (primary strategy)
+# ---------------------------------------------------------------------------
+#
+# Cropping a region and OCR-ing it only works if the region is right, and on a
+# real blueprint it usually is not: doorways are drawn as gaps, so the floor is
+# one connected blob and segmentation returns furniture cells plus one leaking
+# L-shaped region. Reading the printed labels off the whole plan first inverts
+# the problem — the labels are what the draughtsman guarantees, so they become
+# the room list, and segmentation is demoted to supplying each label a box.
+
+
+def _text_mask(gray: np.ndarray) -> np.ndarray:
+    """
+    White-on-black mask holding only glyph-sized ink, walls and furniture removed.
+
+    Tesseract reads printed labels far more reliably once the long wall strokes
+    and hatching next to them are gone: on the test plan this is the difference
+    between finding 5 labels and finding all 10. Size limits are in pixels of the
+    original image, which is fine because plan labels are drawn at a similar
+    physical size regardless of how large the sheet is.
+    """
+    _thresh, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    count, labels, stats, _cents = cv2.connectedComponentsWithStats(ink, connectivity=8)
+
+    glyphs = np.zeros_like(ink)
+    for i in range(1, count):
+        _x, _y, w, h, area = (int(v) for v in stats[i])
+        if 3 <= h <= 26 and 2 <= w <= 60 and area >= 5:
+            glyphs[labels == i] = 255
+    return glyphs
+
+
+def _ocr_scales(h: int, w: int) -> list[float]:
+    """
+    Upscale factors to try, capped so a large sheet does not blow up memory.
+
+    Blueprint labels are often only ~8px tall, well under the ~30px Tesseract
+    wants, and the useful factor depends on the sheet size rather than on the
+    crop — which is exactly what the old per-crop scaling got wrong.
+    """
+    cap = 4200.0 / max(h, w)
+    scales = [s for s in (3.0, 4.0, 5.0) if s <= cap]
+    return scales or [max(1.0, min(cap, 2.0))]
+
+
+def _ocr_word_boxes(image: np.ndarray, scale: float, psm: int) -> list[dict]:
+    """One Tesseract pass; returns vocabulary words with original-pixel boxes."""
+    up = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    try:
+        data = pytesseract.image_to_data(
+            up, config=f"--psm {psm} --oem 3", output_type=pytesseract.Output.DICT
+        )
+    except Exception:
+        return []
+
+    found: list[dict] = []
+    for i, raw in enumerate(data["text"]):
+        token = re.sub(r"[^A-Za-z]", "", raw).strip()
+        try:
+            conf = int(float(data["conf"][i]))
+        except (TypeError, ValueError):
+            continue
+        if len(token) < 3 or conf < 35:
+            continue
+        word = _match_vocab(token)
+        if not word:
+            continue
+        found.append({
+            "word": word,
+            "conf": conf,
+            "x": data["left"][i] / scale,
+            "y": data["top"][i] / scale,
+            "w": data["width"][i] / scale,
+            "h": data["height"][i] / scale,
+        })
+    return found
+
+
+def _collect_words(bgr: np.ndarray) -> list[dict]:
+    """
+    Union of several OCR passes over the whole plan, deduplicated by position.
+
+    No single (preprocessing, scale, page-segmentation-mode) combination finds
+    every label — on the test plan the glyph mask at psm 6 finds KITCHEN while
+    only plain Otsu finds the lower BEDROOM. Taking the union and letting the
+    vocabulary reject the noise gives far better recall than tuning one pass.
+    """
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+    scales = _ocr_scales(h, w)
+
+    glyphs = 255 - _text_mask(gray)                       # black text on white
+    _thresh, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+    # Both preprocessors are needed: the glyph mask is the only one that reads
+    # KITCHEN on the test plan, and plain Otsu is the only one that reads the
+    # lower BEDROOM, whose lettering the glyph filter clips to "BEDR".
+    passes = [(glyphs, s, psm) for s in (scales[0], scales[-1]) for psm in (6, 11)]
+    passes += [(otsu, s, psm) for s in (scales[0], scales[len(scales) // 2])
+               for psm in (6, 11)]
+
+    hits: list[dict] = []
+    for image, scale, psm in passes:
+        hits.extend(_ocr_word_boxes(image, scale, psm))
+
+    # Same word found by several passes: keep the most confident instance.
+    hits.sort(key=lambda d: -d["conf"])
+    unique: list[dict] = []
+    for hit in hits:
+        near = max(12.0, hit["h"] * 1.5)
+        if any(
+            u["word"] == hit["word"]
+            and abs(u["x"] - hit["x"]) < near
+            and abs(u["y"] - hit["y"]) < near
+            for u in unique
+        ):
+            continue
+        unique.append(hit)
+    return unique
+
+
+def _phrase_tokens(tokens: list[str]) -> list[str]:
+    """
+    Deduplicate the words of one label for display.
+
+    Drops any token contained in another, so a label read as both "BED" and
+    "BEDROOM" by different passes renders as "BEDROOM" rather than "BED BEDROOM".
+    """
+    kept: list[str] = []
+    for token in sorted(set(tokens), key=len, reverse=True):
+        if not any(token in other for other in kept):
+            kept.append(token)
+    return [t.upper() for t in sorted(kept, key=lambda t: tokens.index(t))]
+
+
+def _group_words(words: list[dict]) -> list[dict]:
+    """
+    Merge adjacent words into one label, so "MASTER" + "BEDROOM" is one room.
+
+    Two words join if they sit within roughly a line height of each other, which
+    covers both a label written on one line and one wrapped onto two.
+    """
+    groups: list[list[dict]] = []
+    for word in sorted(words, key=lambda d: (d["y"], d["x"])):
+        for group in groups:
+            if any(
+                abs((word["y"] + word["h"] / 2) - (o["y"] + o["h"] / 2)) < o["h"] * 1.8
+                and word["x"] < o["x"] + o["w"] + o["h"] * 3.0
+                and o["x"] < word["x"] + word["w"] + word["h"] * 3.0
+                for o in group
+            ):
+                group.append(word)
+                break
+        else:
+            groups.append([word])
+
+    labels: list[dict] = []
+    for group in groups:
+        group.sort(key=lambda d: (d["y"], d["x"]))
+        tokens = [g["word"] for g in group]
+        if not _has_head_word(tokens):
+            continue                       # furniture callout or bare qualifier
+        x0 = min(g["x"] for g in group)
+        y0 = min(g["y"] for g in group)
+        x1 = max(g["x"] + g["w"] for g in group)
+        y1 = max(g["y"] + g["h"] for g in group)
+        labels.append({
+            "text": " ".join(_phrase_tokens(tokens)),
+            "cx": (x0 + x1) / 2,
+            "cy": (y0 + y1) / 2,
+            "conf": max(g["conf"] for g in group),
+        })
+    return labels
+
+
+def _find_room_labels(bgr: np.ndarray) -> list[dict]:
+    """Printed room labels on the plan, as {"text", "cx", "cy", "conf"}."""
+    if not _TESS_OK:
+        return []
+    return _group_words(_collect_words(bgr))
+
+
+def _box_for_label(
+    label: dict,
+    regions: list[tuple[int, int, int, int]],
+    taken: set[int],
+    img_w: int,
+    img_h: int,
+    max_area_fraction: float = 0.30,
+) -> tuple[int, int, int, int]:
+    """
+    Best available segmented region for one label, or a synthesised box.
+
+    Takes the *largest* unclaimed region containing the anchor that is still under
+    max_area_fraction. Largest rather than smallest because plans draw wardrobes
+    and fixtures as sub-cells inside a room, and the smallest containing region is
+    reliably one of those rather than the room. The cap does the opposite job: on
+    a plan with open doorways one component leaks across half the sheet, and
+    drawing that as a "room" is worse than an approximate box in the right place.
+    """
+    cx, cy = label["cx"], label["cy"]
+    limit = img_w * img_h * max_area_fraction
+
+    candidates = [
+        (i, b) for i, b in enumerate(regions)
+        if i not in taken
+        and b[0] <= cx <= b[0] + b[2]
+        and b[1] <= cy <= b[1] + b[3]
+        and b[2] * b[3] <= limit
+    ]
+    if candidates:
+        index, box = max(candidates, key=lambda pair: pair[1][2] * pair[1][3])
+        taken.add(index)
+        return box
+
+    # Nothing usable — a modest box centred on the label still places the room
+    # correctly on the overlay, and the direction comes from the anchor anyway.
+    bw = max(56, int(img_w * 0.17))
+    bh = max(34, int(img_h * 0.09))
+    x = int(min(max(cx - bw / 2, 0), img_w - bw))
+    y = int(min(max(cy - bh / 2, 0), img_h - bh))
+    return (x, y, bw, bh)
 
 
 # ---------------------------------------------------------------------------
@@ -378,28 +756,44 @@ def detect_rooms(image_path: str, north_angle: float) -> list[dict]:
     bgr = _load_image(image_path)
     img_h, img_w = bgr.shape[:2]
 
-    binary = _preprocess(bgr)
+    regions = _segment_rooms(bgr)
 
-    # Step 3a — contour-based room detection
-    contour_boxes = _find_room_contours(binary)
-    # Step 3b — Hough Line Transform room grid detection
-    hough_boxes = _hough_room_boxes(binary)
-    # Merge both sources, removing near-duplicates
-    boxes = _merge_boxes(contour_boxes, hough_boxes)
+    # Primary strategy: the printed labels are the room list. Direction comes from
+    # the label anchor rather than the box centroid — the anchor is inside the
+    # room by construction, whereas a synthesised or leaked box may not be.
+    labels = _find_room_labels(bgr)
+    if len(labels) >= 2:
+        rooms: list[dict] = []
+        taken: set[int] = set()
+        for label in sorted(labels, key=lambda d: -d["conf"]):
+            x, y, w, h = _box_for_label(label, regions, taken, img_w, img_h)
+            rooms.append(
+                {
+                    "room_label": label["text"],
+                    "direction": _centroid_to_direction(
+                        int(label["cx"]), int(label["cy"]), img_w, img_h, north_angle
+                    ),
+                    "bbox": [x, y, w, h],
+                    "north_angle": north_angle,
+                }
+            )
+        rooms.sort(key=lambda r: (r["bbox"][1], r["bbox"][0]))
+        return rooms
 
-    rooms: list[dict] = []
+    # No readable labels (scan, handwriting, or no Tesseract): fall back to
+    # segmenting regions and OCR-ing each crop, then to the contour + Hough grid.
+    boxes = regions
+    if len(boxes) < 2:
+        binary = _preprocess(bgr)
+        boxes = _merge_boxes(_find_room_contours(binary), _hough_room_boxes(binary))
+
+    rooms = []
     for idx, (x, y, w, h) in enumerate(boxes, start=1):
-        cx = x + w // 2
-        cy = y + h // 2
-
-        label = _ocr_crop(bgr, x, y, w, h) or f"Room {idx}"
-
-        direction = _centroid_to_direction(cx, cy, img_w, img_h, north_angle)
-
+        cx, cy = x + w // 2, y + h // 2
         rooms.append(
             {
-                "room_label": label,
-                "direction": direction,
+                "room_label": _ocr_crop(bgr, x, y, w, h) or f"Room {idx}",
+                "direction": _centroid_to_direction(cx, cy, img_w, img_h, north_angle),
                 "bbox": [x, y, w, h],
                 "north_angle": north_angle,
             }
