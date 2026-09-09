@@ -397,7 +397,14 @@ def _pay_button(plan_id: str, key: str, label: str) -> None:
     if pending and pending.get("plan_id") == plan_id and is_configured():
         if st.session_state.checkout_opened_for != pending["id"]:
             st.session_state.checkout_opened_for = pending["id"]
-            render_checkout(pending)
+            file_bytes = st.session_state.get("pending_upload_bytes")
+            file_digest = hashlib.md5(file_bytes).hexdigest()[:12] if file_bytes else ""
+            render_checkout(
+                pending,
+                file_digest=file_digest,
+                filename=st.session_state.get("pending_upload_name") or "",
+                north_angle=st.session_state.get("pending_north_angle") or 0.0,
+            )
         else:
             st.caption("Razorpay should open over the full page. Click Pay again if it did not.")
 
@@ -423,6 +430,17 @@ def render_analyser() -> None:
         uploaded_file = st.file_uploader(
             "Floor plan", type=["png", "jpg", "jpeg", "pdf"], label_visibility="collapsed"
         )
+        if uploaded_file is None and st.session_state.get("pending_upload_bytes"):
+            class _CachedUpload:
+                def __init__(self, data, name):
+                    self._data = data
+                    self.name = name
+                def getvalue(self):
+                    return self._data
+            uploaded_file = _CachedUpload(
+                st.session_state.pending_upload_bytes,
+                st.session_state.pending_upload_name,
+            )
     with right:
         facing = st.selectbox(
             "Which direction does the **top** of your plan point to?",
@@ -430,7 +448,9 @@ def render_analyser() -> None:
             help="Check the north arrow on your blueprint. If there isn't one, most plans are drawn with North at the top.",
         )
     north_angle = _FACING[facing]
-
+    st.session_state.pending_upload_bytes = uploaded_file.getvalue() if uploaded_file else None
+    st.session_state.pending_upload_name = uploaded_file.name if uploaded_file else None
+    st.session_state.pending_north_angle = north_angle
     if not ocr_available():
         st.warning(
             "**Tesseract OCR is not installed**, so the room names printed on the plan cannot "
@@ -440,18 +460,31 @@ def render_analyser() -> None:
         )
 
     if uploaded_file is None:
-        st.info("Upload a floor plan (PNG, JPG or PDF) to run the compliance check.")
-        st.stop()
+        digest = st.query_params.get("file_digest")
+        fname = st.query_params.get("filename")
+        cached_path = None
+        if digest and fname:
+            cached_path = Path(tempfile.gettempdir()) / f"vastu_{digest}{Path(fname).suffix.lower() or '.png'}"
+            if not cached_path.exists():
+                cached_path = None
 
-    try:
-        with st.spinner("Reading room labels and checking Vastu compliance…"):
-            image_path, result, tiers = _analyse(
-                uploaded_file.getvalue(), uploaded_file.name, north_angle
-            )
-    except RuntimeError as exc:
-        st.error(str(exc))
-        st.stop()
+        if cached_path is None:
+            st.info("Upload a floor plan (PNG, JPG or PDF) to run the compliance check.")
+            st.stop()
 
+        qp_angle = st.query_params.get("north_angle")
+        if qp_angle:
+            north_angle = float(qp_angle)
+        image_path, result, tiers = _analyse(cached_path.read_bytes(), fname, north_angle)
+    else:
+        try:
+            with st.spinner("Reading room labels and checking Vastu compliance…"):
+                image_path, result, tiers = _analyse(
+                    uploaded_file.getvalue(), uploaded_file.name, north_angle
+                )
+        except RuntimeError as exc:
+            st.error(str(exc))
+            st.stop()
     room_results = result["room_results"]
 
     if not room_results:

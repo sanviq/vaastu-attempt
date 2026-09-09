@@ -179,7 +179,7 @@ def handle_payment_return() -> bool:
     return False
 
 
-def render_checkout(order: dict[str, Any]) -> None:
+def render_checkout(order: dict[str, Any], file_digest: str = "", filename: str = "", north_angle: float = 0.0) -> None:
     """Open Razorpay as a full-page modal (not inside Streamlit's iframe)."""
     cfg = _secrets()
     if not cfg:
@@ -196,6 +196,7 @@ def render_checkout(order: dict[str, Any]) -> None:
         "order_id": order["id"],
         "theme": {"color": "#00E5FF"},
         "prefill": {},
+        "notes": {"file_digest": file_digest, "filename": filename, "north_angle": str(north_angle)},
     }
 
     # Streamlit renders this inside a small iframe. Razorpay's modal must be
@@ -209,11 +210,14 @@ def render_checkout(order: dict[str, Any]) -> None:
         const topDoc = topWin.document;
 
         function redirectAfterPay(response) {{
-          const params = new URLSearchParams({{
+                    const params = new URLSearchParams({{
             razorpay_payment_id: response.razorpay_payment_id,
             razorpay_order_id: response.razorpay_order_id,
             razorpay_signature: response.razorpay_signature,
             plan: planId,
+            file_digest: {json.dumps(file_digest)},
+            filename: {json.dumps(filename)},
+            north_angle: {json.dumps(str(north_angle))},
           }});
           const base = topWin.location.origin + topWin.location.pathname;
           topWin.location.href = base + "?" + params.toString();
