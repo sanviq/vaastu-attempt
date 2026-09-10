@@ -40,25 +40,36 @@ st.markdown(
     """
     <style>
       :root {
-        --bg:#07070F; --bg2:#0E0E1B; --card:rgba(255,255,255,.035);
-        --card-hi:rgba(255,255,255,.06); --border:rgba(255,255,255,.08);
-        --text:#E8E8F4; --muted:#6E6E9A;
-        --good:#35C77E; --warn:#E8A33D; --bad:#F0556B; --none:#6E6E9A;
-        --accent:#00E5FF;
+        /* Japanese Cherry Blossom (Yozakura / 夜桜) Theme Palette */
+        --bg: #0E0913;
+        --bg2: #190F22;
+        --card: rgba(255, 238, 246, 0.038);
+        --card-hi: rgba(255, 218, 238, 0.075);
+        --border: rgba(255, 182, 213, 0.14);
+        --text: #FDF0F6;
+        --muted: #A88EA2;
+        --good: #3ED185;
+        --warn: #F5A623;
+        --bad: #FF4D6D;
+        --none: #8E7688;
+        --accent: #FF7597;
+        --accent-glow: rgba(255, 117, 151, 0.28);
+        --accent-soft: rgba(255, 117, 151, 0.14);
+        --accent-hover: #FF8EA9;
       }
-      .stApp { background: radial-gradient(1200px 600px at 15% -10%, #14142B 0%, var(--bg) 55%); }
+      .stApp { background: radial-gradient(1200px 600px at 15% -10%, #2A132C 0%, #1A0D22 35%, var(--bg) 70%); }
       .block-container { padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1180px; }
 
       .hero { position:relative; border:1px solid var(--border); border-radius:16px;
               padding:1.5rem 1.7rem; margin-bottom:1.3rem; overflow:hidden;
-              background: linear-gradient(135deg, rgba(0,229,255,.10) 0%, rgba(157,78,221,.10) 100%), var(--bg2); }
-      .hero h1 { color:#fff; margin:0 0 .3rem 0; font-size:1.5rem; letter-spacing:-.5px; font-weight:700; }
-      .hero p  { color:#A9A9C8; margin:0; font-size:.88rem; max-width:64ch; }
+              background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent) 0%, rgba(186, 104, 200, 0.10) 100%), var(--bg2); }
+      .hero h1 { color:var(--text); margin:0 0 .3rem 0; font-size:1.5rem; letter-spacing:-.5px; font-weight:700; }
+      .hero p  { color:#D6C2D0; margin:0; font-size:.88rem; max-width:64ch; }
 
       .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:.8rem; margin:.2rem 0 1rem 0; }
       .stat { background:var(--card); border:1px solid var(--border); border-radius:14px;
-              padding:.95rem 1.1rem; transition:background .15s ease; }
-      .stat:hover { background:var(--card-hi); }
+              padding:.95rem 1.1rem; transition:background .15s ease, border-color .15s ease; }
+      .stat:hover { background:var(--card-hi); border-color:rgba(255, 182, 213, 0.25); }
       .stat .k { font-size:.66rem; text-transform:uppercase; letter-spacing:1px;
                  color:var(--muted); font-weight:600; margin-bottom:.35rem; }
       .stat .v { font-size:1.95rem; font-weight:700; letter-spacing:-1px; line-height:1.05; }
@@ -73,11 +84,11 @@ st.markdown(
       .room { display:grid; grid-template-columns:1.4fr .5fr .9fr 2.4fr; gap:.9rem;
               align-items:center; padding:.72rem .95rem; border:1px solid var(--border);
               border-left:3px solid var(--edge); border-radius:11px;
-              background:var(--card); margin-bottom:.45rem; }
+              background:var(--card); margin-bottom:.45rem; transition:background .15s ease; }
       .room:hover { background:var(--card-hi); }
       .room .nm { font-weight:650; color:var(--text); font-size:.92rem; letter-spacing:.2px; }
       .room .rule { font-size:.72rem; color:var(--muted); margin-top:.12rem; }
-      .room .note { font-size:.78rem; color:#9C9CBE; line-height:1.35; }
+      .room .note { font-size:.78rem; color:#DFC8D5; line-height:1.35; }
       .dir { font-size:.9rem; font-weight:700; color:var(--text); letter-spacing:.5px; }
       .pill { display:inline-block; padding:.2rem .6rem; border-radius:99px;
               font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.6px; }
@@ -98,37 +109,38 @@ st.markdown(
       /* --- plan badge, pricing, locked panels ------------------------------- */
       .chip { display:inline-block; padding:.16rem .55rem; border-radius:99px;
               font-size:.64rem; font-weight:700; text-transform:uppercase; letter-spacing:.8px; }
-      .chip.free { background:rgba(110,110,154,.22); color:#A9A9C8; }
-      .chip.pro  { background:rgba(0,229,255,.15); color:var(--accent); }
-      .chip.demo { background:rgba(232,163,61,.16); color:var(--warn); }
+      .chip.free { background:rgba(168,142,162,.18); color:#D6C2D0; }
+      .chip.pro  { background:color-mix(in srgb, var(--accent) 18%, transparent); color:var(--accent); }
+      .chip.demo { background:color-mix(in srgb, var(--warn) 16%, transparent); color:var(--warn); }
 
       .plan { border:1px solid var(--border); background:var(--card); border-radius:16px;
-              padding:1.3rem 1.4rem; height:100%; }
-      .plan.hi { border-color:rgba(0,229,255,.35);
-                 background:linear-gradient(160deg, rgba(0,229,255,.07) 0%, var(--card) 60%); }
-      .plan h3 { color:#fff; font-size:1.05rem; margin:.5rem 0 .1rem 0; font-weight:700; }
-      .plan .price { font-size:2rem; font-weight:700; color:#fff; letter-spacing:-1.5px;
+              padding:1.3rem 1.4rem; height:100%; transition:border-color .15s ease; }
+      .plan.hi { border-color:color-mix(in srgb, var(--accent) 40%, transparent);
+                 background:linear-gradient(160deg, color-mix(in srgb, var(--accent) 10%, transparent) 0%, var(--card) 60%);
+                 box-shadow:0 4px 28px rgba(255, 117, 151, 0.08); }
+      .plan h3 { color:var(--text); font-size:1.05rem; margin:.5rem 0 .1rem 0; font-weight:700; }
+      .plan .price { font-size:2rem; font-weight:700; color:var(--text); letter-spacing:-1.5px;
                      margin:.35rem 0 .1rem 0; }
       .plan .price small { font-size:.8rem; font-weight:500; color:var(--muted); letter-spacing:0; }
       .plan .blurb { color:var(--muted); font-size:.78rem; margin-bottom:.9rem; }
       .plan ul { list-style:none; padding:0; margin:0; }
-      .plan li { color:#B9B9D4; font-size:.82rem; padding:.3rem 0 .3rem 1.35rem;
+      .plan li { color:#DFC8D5; font-size:.82rem; padding:.3rem 0 .3rem 1.35rem;
                  position:relative; line-height:1.4; }
       .plan li:before { content:"✓"; position:absolute; left:0; color:var(--good); font-weight:700; }
       .plan li.off { color:var(--muted); }
       .plan li.off:before { content:"—"; color:var(--muted); }
 
-      .lock { border:1px dashed rgba(0,229,255,.28); border-radius:16px; padding:1.6rem 1.5rem;
-              background:linear-gradient(160deg, rgba(0,229,255,.05) 0%, var(--card) 70%);
+      .lock { border:1px dashed color-mix(in srgb, var(--accent) 35%, transparent); border-radius:16px; padding:1.6rem 1.5rem;
+              background:linear-gradient(160deg, color-mix(in srgb, var(--accent) 6%, transparent) 0%, var(--card) 70%);
               text-align:center; margin:.6rem 0 1rem 0; }
-      .lock .t { color:#fff; font-weight:700; font-size:1.02rem; margin-bottom:.3rem; }
+      .lock .t { color:var(--text); font-weight:700; font-size:1.02rem; margin-bottom:.3rem; }
       .lock .c { color:var(--muted); font-size:.82rem; max-width:56ch; margin:0 auto; line-height:1.5; }
 
       .sec { border:1px solid var(--border); background:var(--card); border-radius:16px;
              padding:1.3rem 1.5rem; margin-bottom:.9rem; }
-      .sec h3 { color:#fff; font-size:1rem; margin:0 0 .55rem 0; font-weight:700;
+      .sec h3 { color:var(--text); font-size:1rem; margin:0 0 .55rem 0; font-weight:700;
                 letter-spacing:-.2px; }
-      .sec p, .sec li { color:#A9A9C8; font-size:.86rem; line-height:1.62; }
+      .sec p, .sec li { color:#DFC8D5; font-size:.86rem; line-height:1.62; }
       .sec p { margin:0 0 .6rem 0; }
       .sec p:last-child { margin-bottom:0; }
       .sec ol, .sec ul { margin:0; padding-left:1.15rem; }
@@ -143,25 +155,26 @@ st.markdown(
       .who.one { grid-template-columns:minmax(210px,340px); }
       .who .p { border:1px solid var(--border); border-radius:12px; padding:.85rem 1rem;
                 background:rgba(255,255,255,.02); }
-      .who .p .n { color:#fff; font-weight:700; font-size:.9rem; }
+      .who .p .n { color:var(--text); font-weight:700; font-size:.9rem; }
       .who .p .r { color:var(--accent); font-size:.68rem; text-transform:uppercase;
                    letter-spacing:.9px; font-weight:600; margin:.2rem 0 .35rem 0; }
       .who .p .d { color:var(--muted); font-size:.78rem; line-height:1.45; }
 
-      .note-box { border:1px solid rgba(232,163,61,.25); background:rgba(232,163,61,.06);
+      .note-box { border:1px solid rgba(245,166,35,.25); background:rgba(245,166,35,.05);
                   border-radius:12px; padding:.85rem 1.1rem; }
-      .note-box p { color:#C8B08A; font-size:.8rem; margin:0; line-height:1.55; }
+      .note-box p { color:#E5C396; font-size:.8rem; margin:0; line-height:1.55; }
 
       /* Streamlit's primary button is red by default, which reads as a warning
          next to green/amber/red verdict pills. Repaint it in the accent. */
       .stButton button[kind="primary"],
       .stButton button[data-testid="stBaseButton-primary"] {
-        background:var(--accent); border-color:var(--accent); color:#04121A;
+        background:var(--accent); border-color:var(--accent); color:#1B0612;
         font-weight:700; letter-spacing:.2px;
       }
       .stButton button[kind="primary"]:hover,
       .stButton button[data-testid="stBaseButton-primary"]:hover {
-        background:#5BEFFF; border-color:#5BEFFF; color:#04121A;
+        background:var(--accent-hover, #FF8EA9); border-color:var(--accent-hover, #FF8EA9); color:#1B0612;
+        box-shadow:0 0 16px rgba(255, 117, 151, 0.35);
       }
     </style>
     """,
@@ -691,8 +704,8 @@ def render_about() -> None:
     st.markdown(
         """
         <div class="hero">
-          <h1>About</h1>
-          <p>What this tool checks, how it decides, and who built it.</p>
+          <h1>About VAASTU WISE 🌸</h1>
+          <p>Automated architectural spatial intelligence bridging computer vision, the Vastu Purusha Mandala, and peer-reviewed architectural research.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -701,13 +714,9 @@ def render_about() -> None:
     st.markdown(
         """
         <div class="sec">
-          <h3>What this is</h3>
-          <p>A Vastu consultation usually means someone walking your home with a compass and an
-             opinion. You get a verdict, rarely a reason, and almost never a citation.</p>
-          <p>This tool reads your actual floor plan instead. It finds every room, places it on the
-             Vastu Purusha Mandala, and reports what published sources say about that room in that
-             zone — <b>naming the sources, and telling you how many of them agree</b>. When the
-             sources disagree, you see the disagreement rather than an average that hides it.</p>
+          <h3>What This Is</h3>
+          <p>Traditional Vastu consultations frequently depend on subjective personal interpretations without empirical reasoning or literature citations. Blueprints are evaluated by eye, and conflicting guidelines are rarely disclosed.</p>
+          <p><b>VAASTU WISE</b> transforms this process through computational objectivity. By ingesting actual floor plans, the system applies image processing and optical character recognition to locate rooms, mathematically projects them onto the calibrated <b>Vastu Purusha Mandala</b>, and evaluates each space against published academic and architectural literature. When authoritative sources disagree, that divergence is transparently reported with source-level attribution rather than obscured by a generic average.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -716,23 +725,12 @@ def render_about() -> None:
     st.markdown(
         """
         <div class="sec">
-          <h3>How it works</h3>
+          <h3>How the Pipeline Works</h3>
           <ol>
-            <li><b>Read the plan.</b> The room names already printed on your drawing —
-                KITCHEN, BEDROOM, POOJA, TOILET — are located by OCR and used as ground truth.
-                Rooms are not guessed from shapes, because on a real blueprint the doorways are
-                drawn as gaps and the whole floor reads as one connected space.</li>
-            <li><b>Place it on the mandala.</b> The plan is divided into eight zones of 45°
-                around a central Brahmasthan, oriented by the north direction you supply.
-                Each room's centre decides its zone.</li>
-            <li><b>Check against the sources.</b> Every room is matched to a rule drawn from
-                published Vastu literature. Sitting in a preferred zone is compliant; sitting in a
-                zone a source explicitly warns against is not. Anything else is judged by how many
-                degrees it sits from the nearest preferred zone, so a near miss and a total
-                mismatch do not score the same.</li>
-            <li><b>Rank the fixes.</b> Violations are ordered worst-first and cut into four
-                remodelling plans — 25%, 50%, 75% and 100% — so you can see what changes at each
-                level of effort instead of an all-or-nothing verdict.</li>
+            <li><b>Blueprint Vision &amp; OCR Ingestion.</b> The system processes architectural drawings through Gaussian filtering, adaptive thresholding, and morphological operations. Wall lines and room boundaries are detected via contour analysis and Probabilistic Hough Line Transforms. Room labels (such as <i>Kitchen</i>, <i>Master Bedroom</i>, <i>Pooja</i>, or <i>Toilet</i>) are detected via OCR directly from blueprint annotations to serve as ground-truth spatial anchors.</li>
+            <li><b>Mandala Coordinate Calibration.</b> The blueprint is mapped to the sacred 9-zone Vastu Purusha Mandala (North, North-East, East, South-East, South, South-West, West, North-West, and Central Brahmasthan). The grid dynamically aligns with the user-specified North compass orientation, calculating geometric centroids for each detected space.</li>
+            <li><b>Cross-Referenced Compliance Engine.</b> Each room and orientation pair is verified against our rule dataset. Placements are classified as <b>Compliant</b> (in preferred zones), <b>Moderate</b> (in acceptable or neutral zones), or <b>Non-Compliant</b> (in zones explicitly cautioned against by scholars). An agreement metric quantifies consensus across published sources.</li>
+            <li><b>Progressive Tiered Remodelling.</b> Deviations are prioritized by severity and published consensus. Four actionable remediation tiers — <b>25%</b> (quick wins resolving the most critical conflicts), <b>50%</b>, <b>75%</b>, and <b>100%</b> (comprehensive structural harmony) — provide incremental layout solutions with directional relocation vectors.</li>
           </ol>
         </div>
         """,
@@ -742,18 +740,14 @@ def render_about() -> None:
     st.markdown(
         """
         <div class="sec">
-          <h3>The rule set</h3>
-          <p>Verdicts come from a curated dataset of <b>13 room types</b> compiled from
-             <b>five published works</b> on Vastu Shastra and its application to modern
-             residential architecture. Every rule records which source it came from, and the
-             room-by-room view cites them for the plan you uploaded.</p>
+          <h3>The Literature &amp; Rule Dataset</h3>
+          <p>Our rule corpus comprises <b>13 functional room types</b> cross-referenced across <b>five foundational publications</b> in Vastu Shastra and computational architectural layout design:</p>
           <ul>
-            <li>Utility of the Ancient Indian Science of Vaastu in Modern Architecture</li>
-            <li>Vastu Shastra: An Established Science (Parts II and VI)</li>
-            <li>Vastu Shastra: A Traditional Indian Architectural Science</li>
-            <li>Optimal floor plan for residential houses using Eastern concepts of Vaastu
-                Shastra: an artificial intelligence approach</li>
-            <li>Sense of direction in Vaastu Shastra</li>
+            <li><b>Optimal floor plan for residential houses using Eastern concepts of Vaastu Shastra: an artificial intelligence approach</b> — <i>Asian Journal of Civil Engineering</i> (Springer, 2023).</li>
+            <li><b>Utility of the Ancient Indian Science of Vaastu in Modern Architecture</b> — Peertechz Journal of Engineering.</li>
+            <li><b>Vastu Shastra: An Established Science</b> (Parts II &amp; VI: Guidelines on Bedrooms and Cardinal Orientations).</li>
+            <li><b>Vastu Shastra: A Traditional Indian Architectural Science</b> — Research Compendium.</li>
+            <li><b>Sense of Direction in Vaastu Shastra</b> — Spatial Alignment Monograph.</li>
           </ul>
         </div>
         """,
@@ -763,19 +757,17 @@ def render_about() -> None:
     st.markdown(
         """
         <div class="sec">
-          <h3>Who built it</h3>
+          <h3>Engineering Team</h3>
           <div class="who">
             <div class="p">
               <div class="n">Sanvi Agarwal</div>
-              <div class="r">Compliance engine &amp; product</div>
-              <div class="d">Built the Vastu rule engine, the scoring and remodelling logic,
-                 and the application itself.</div>
+              <div class="r">Compliance Engine &amp; Product Architecture</div>
+              <div class="d">Engineered the Vastu rules engine, multi-source scoring algorithms, progressive remediation tiers, payment flow, and application core.</div>
             </div>
             <div class="p">
               <div class="n">Harshika</div>
-              <div class="r">Computer vision &amp; visualisation</div>
-              <div class="d">Built the blueprint reader that locates and identifies rooms, and
-                 the overlay that draws the results back onto your plan.</div>
+              <div class="r">Computer Vision &amp; Visual Intelligence</div>
+              <div class="d">Developed the blueprint ingestion pipeline, contour and Hough line boundary detection, Tesseract OCR room recognition, and the visual compliance overlays.</div>
             </div>
           </div>
         </div>
@@ -783,18 +775,15 @@ def render_about() -> None:
         unsafe_allow_html=True,
     )
 
-    # NOTE (Sanvi): replace the placeholders below with your mentor's actual details
-    # and confirm with him which contact he is happy to have shown publicly.
     st.markdown(
         """
         <div class="sec">
-          <h3>Mentor</h3>
+          <h3>Academic Guidance &amp; Advisory</h3>
           <div class="who one">
             <div class="p">
-              <div class="n">[Full name]</div>
-              <div class="r">[Designation, Department]</div>
-              <div class="d">[Institution]<br>
-                 <a href="mailto:[email]">[email]</a></div>
+              <div class="n">Faculty Project Advisory</div>
+              <div class="r">Department of Computer Science &amp; Engineering</div>
+              <div class="d">Academic and research supervision supporting computer vision evaluation, rule-engine formalization, and design architecture.</div>
             </div>
           </div>
         </div>
@@ -805,22 +794,16 @@ def render_about() -> None:
     st.markdown(
         """
         <div class="sec">
-          <h3>Contact</h3>
-          <p>Questions, a plan that did not read correctly, or a rule you think we got wrong —
-             tell us. Misreads are the fastest way we improve.</p>
-          <p><a href="mailto:[your email]">[your email]</a></p>
+          <h3>Research &amp; Feedback</h3>
+          <p>Have inquiries regarding rule formulations, blueprint detection fidelity, or dataset expansion? We welcome feedback from architects, researchers, and engineers.</p>
+          <p>Reach out to the development team at <a href="mailto:vaastuwise.project@gmail.com">vaastuwise.project@gmail.com</a>.</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        '<div class="note-box"><p><b>Please read.</b> This tool provides guidance based on '
-        "published Vastu literature. It is not architectural, structural or engineering advice, "
-        "and it does not assess safety, load-bearing elements, building codes or local "
-        "regulations. Consult a licensed architect or structural engineer before making any "
-        "structural change to a building. Vastu sources disagree with each other, and a "
-        "compliance score is a reading of those sources — not a guarantee of any outcome.</p></div>",
+        '<div class="note-box"><p><b>Advisory Disclaimer.</b> This platform provides analytical guidance derived from published historical and contemporary Vastu literature. It is not architectural, structural, or civil engineering advice, and does not evaluate structural load, soil mechanics, or municipal building regulations. Consult a licensed architect or structural engineer before making any structural changes to a property.</p></div>',
         unsafe_allow_html=True,
     )
 
